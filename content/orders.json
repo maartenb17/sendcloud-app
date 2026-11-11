@@ -60,10 +60,28 @@
           "id": "sendcloud_status",
           "label": "Sendcloud"
         }
+      ],
+      "bulk_actions": [
+        {
+          "id": "send_to_sendcloud",
+          "label": "Send to Sendcloud",
+          "function": "send-to-sendcloud",
+          "loading_label": "Sending to Sendcloud…",
+          "hint": "Sends up to 10 selected orders. Waiting and test orders are sent too. An order already in Sendcloud is updated, unless it has a label."
+        }
       ]
     },
     {
       "id": "edit",
+      "extra_actions": [
+        {
+          "id": "send_to_sendcloud",
+          "label": "Send to Sendcloud",
+          "function": "send-to-sendcloud",
+          "loading_label": "Sending to Sendcloud…",
+          "hint": "Sends this order, or updates it in Sendcloud when it is already there and has no label"
+        }
+      ],
       "tabs": [
         {
           "id": "sendcloud",

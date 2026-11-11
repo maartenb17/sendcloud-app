@@ -84,7 +84,8 @@ async function sendcloudRequest(
   return json;
 }
 
-// create or update (upsert by order_id + integration id) one order in Incoming Orders
+// Sendcloud identifies an Incoming Order by order_id plus the integration id.
+// Posting the same Swell order id again updates that order; it does not create a second one.
 export async function upsertOrder(
   settings: SendcloudSettings,
   order: object,
