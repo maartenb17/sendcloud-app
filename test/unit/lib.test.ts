@@ -3,11 +3,11 @@ import {
   buildOrder,
   chooseInvoice,
   customerLocale,
+  pushOrder,
   getSignatureKey,
   hasSeparateOrderSchedule,
   isCanceledOrder,
   isTestOrder,
-  pushOrder,
   splitAddress,
   toPythonJson,
   verifySignature,
@@ -276,6 +276,49 @@ describe("subscription plan on the packing slip", () => {
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
     expect(body[0].order_details.order_items[0].name).toBe("SMPL72");
     expect(get.mock.calls.map((call) => call[0])).not.toContain("/subscription-plans/plan_1");
+    fetchMock.mockRestore();
+  });
+
+  it("uses the account locale when the dashboard order has none", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ data: [{ id: 1 }] }));
+    const order = makeOrder({
+      account: { id: "acc_1" },
+      items: [
+        subscriptionItem({
+          purchase_option: {
+            type: "subscription",
+            plan_id: "plan_1",
+            plan_name: "Daily",
+            plan_description: "Jaarabonnement",
+          },
+        }),
+      ],
+    });
+    const get = vi.fn(async (url: string) => {
+      if (url === "/settings/shipments") return { weight_unit: "kg" };
+      if (url === "/accounts/acc_1") return { id: "acc_1", locale: "en" };
+      if (url === "/products/prod_1") {
+        return {
+          name: "SMPL72 (en)",
+          purchase_options: {
+            subscription: { plans: [{ id: "plan_1", name: "Daily", description: "Yearly subscription" }] },
+          },
+        };
+      }
+      throw new Error("Resource not found /subscription-plans/plan_1");
+    });
+
+    await pushOrder(
+      { get, put: vi.fn().mockResolvedValue({}) } as any,
+      { ...SETTINGS, show_subscription_plan: true } as any,
+      order,
+      (data) => data,
+    );
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body[0].order_details.order_items[0].name).toBe("SMPL72 (en) (Yearly subscription)");
+    expect(get).toHaveBeenCalledWith("/accounts/acc_1");
+    expect(get).toHaveBeenCalledWith("/products/prod_1", { $locale: "en", expand: ["variants"] });
     fetchMock.mockRestore();
   });
 });

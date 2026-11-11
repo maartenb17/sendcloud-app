@@ -353,20 +353,55 @@ export function hasSeparateOrderSchedule(subscription: any): boolean {
   );
 }
 
+function localeCode(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const code = value.split(',')[0]?.trim();
+  return code || undefined;
+}
+
 // account.locale, then the order's display locale, then the account's.
 // one code: "en,nl" is the same as "en". No code means the store language.
 export function customerLocale(order: any): string | undefined {
   const candidates = [order?.account?.locale, order?.display_locale, order?.account?.display_locale];
   for (const value of candidates) {
-    if (typeof value !== 'string') {
-      continue;
-    }
-    const code = value.split(',')[0]?.trim();
+    const code = localeCode(value);
     if (code) {
       return code;
     }
   }
   return undefined;
+}
+
+// a dashboard order often has no locale of its own. the account's locale is the contact preference.
+export async function withCustomerLocale(swell: SwellAPI, order: any): Promise<any> {
+  if (customerLocale(order)) {
+    return order;
+  }
+  const accountId =
+    (typeof order?.account === 'string' && order.account) || order?.account?.id || order?.account_id;
+  if (!accountId) {
+    return order;
+  }
+  try {
+    const account = await swell.get(`/accounts/${accountId}`);
+    if (!customerLocale({ account })) {
+      return order;
+    }
+    return {
+      ...order,
+      account: {
+        ...(order?.account && typeof order.account === 'object' ? order.account : {}),
+        ...account,
+      },
+    };
+  } catch (err: any) {
+    console.error(
+      `Sendcloud: could not load account ${accountId} for the packing slip language - ${err?.message || err}`,
+    );
+    return order;
+  }
 }
 
 export async function withLocalizedNames(swell: SwellAPI, order: any): Promise<any> {
@@ -434,6 +469,25 @@ function isSubscriptionLine(item: any, parent?: any): boolean {
   return Boolean(item?.subscription_id || parent?.subscription_id);
 }
 
+// the product was loaded in the customer's language. its plan beats the text stored on the order.
+function localizedPlanText(item: any, parent: any, planId: string): string {
+  if (!planId) {
+    return '';
+  }
+  for (const entry of [item, parent]) {
+    const plans = entry?.product?.purchase_options?.subscription?.plans;
+    if (!Array.isArray(plans)) {
+      continue;
+    }
+    const match = plans.find((plan: any) => plan?.id === planId);
+    const text = visibleText(match?.description) || visibleText(match?.name);
+    if (text) {
+      return text;
+    }
+  }
+  return '';
+}
+
 // description on the line, then on the bundle parent. plan_name is English, so it is last.
 export function orderLinePlanText(item: any, parent?: any): string {
   for (const entry of [item, parent]) {
@@ -495,7 +549,10 @@ export async function withSubscriptionPlans(swell: SwellAPI, order: any): Promis
     let plan = '';
     if (isSubscriptionLine(item, parent)) {
       const planId = subscriptionPlanId(item) || subscriptionPlanId(parent);
-      plan = (await planFromApi(planId)) || orderLinePlanText(item, parent);
+      plan =
+        (await planFromApi(planId)) ||
+        (locale ? localizedPlanText(item, parent, planId) : '') ||
+        orderLinePlanText(item, parent);
     }
     items.push(plan ? { ...item, packing_slip_plan: plan } : item);
   }
@@ -630,7 +687,8 @@ export async function pushOrder(
   extra: Record<string, any> = {},
 ): Promise<{ id?: number }> {
   const weightUnit = await getWeightUnit(swell);
-  const localized = await withLocalizedNames(swell, order);
+  const withLocale = await withCustomerLocale(swell, order);
+  const localized = await withLocalizedNames(swell, withLocale);
   const named =
     settings.show_subscription_plan === true ? await withSubscriptionPlans(swell, localized) : localized;
   const created = await upsertOrder(settings, buildOrder(named, settings, weightUnit));
