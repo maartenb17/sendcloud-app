@@ -70,7 +70,12 @@ const pending = (order: any, reason: string) =>
   new ShipmentPending(`Swell couldn't create the shipment for order ${order.number} yet (${reason})`);
 
 // Swell shipment for everything left to ship; reuses one with the parcel's tracking number
-export async function createSwellShipment(swell: SwellAPI, order: any, parcel: SendcloudParcel): Promise<string> {
+export async function createSwellShipment(
+  swell: SwellAPI,
+  order: any,
+  parcel: SendcloudParcel,
+  options?: { notify?: boolean },
+): Promise<string> {
   const [existing] = await findShipmentsByTracking(swell, order.id, parcel.tracking_number);
   if (existing) {
     console.log(`Sendcloud: order ${order.number} already has shipment ${existing.id} for ${parcel.tracking_number}`);
@@ -111,6 +116,8 @@ export async function createSwellShipment(swell: SwellAPI, order: any, parcel: S
       notes: `Sendcloud parcel ${parcel.id}${parcel.tracking_url ? `: ${parcel.tracking_url}` : ''}`,
       // Swell refuses items the order has no longer left to ship, so they can't be shipped twice
       $validate_items: true,
+      // same notification Swell sends when a shipment is created in the dashboard; reuse returns earlier
+      ...(options?.notify && { $notify: 'orders.shipped' }),
     });
   } catch (err) {
     // a refused write throws a SwellError with the errors in `body`

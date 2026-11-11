@@ -41,6 +41,17 @@ describe("createSwellShipment", () => {
         items: [{ order_item_id: "item_1", product_id: "prod_1", variant_id: undefined, quantity: 2 }],
       }),
     );
+    expect(swell.post.mock.calls[0][1].$notify).toBeUndefined();
+  });
+
+  it("notifies the customer only when a new shipment is created", async () => {
+    const swell = client();
+    await createSwellShipment(swell, makeOrder(), PARCEL, { notify: true });
+    expect(swell.post).toHaveBeenCalledWith("/shipments", expect.objectContaining({ $notify: "orders.shipped" }));
+
+    const reused = client({ shipments: [[{ id: "ship_old" }]] });
+    await expect(createSwellShipment(reused, makeOrder(), PARCEL, { notify: true })).resolves.toBe("ship_old");
+    expect(reused.post).not.toHaveBeenCalled();
   });
 
   it("reuses the order's shipment with the parcel's tracking number", async () => {

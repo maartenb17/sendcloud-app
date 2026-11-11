@@ -31,6 +31,7 @@ All credentials and options are app settings (`settings/sendcloud.json`). Nothin
 | Default shipping option code | no | | Preselects a Sendcloud shipping option on each order, e.g. `postnl:standard`. |
 | Default parcel weight (kg) | no | 1 | Used when the order's items have no shipment weight. |
 | Create Swell shipment when label is created | no | on | Fulfill the Swell order with the Sendcloud tracking number. |
+| Notify the customer when the shipment is created | no | on | Sends Swell's `orders.shipped` notification when that shipment is created. |
 | Enabled | no | on | When off, orders and cancellations aren't sent, and Sendcloud webhooks are verified and acknowledged without updating orders or creating shipments. Test connection still works and says the app is off. |
 
 ## Setup
