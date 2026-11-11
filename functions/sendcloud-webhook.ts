@@ -132,11 +132,15 @@ export async function post(req: SwellRequest) {
     !NO_LABEL_STATUSES.includes(statusId) &&
     !isCanceled;
 
-  if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id) {
+  // a parcel for an order this app did not send still stores tracking, but must not create a second shipment
+  const sentByApp = Boolean(appData.sendcloud_order_id);
+  if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id && sentByApp) {
     const shipmentId = await createSwellShipment(swell, order, parcel);
     if (shipmentId) {
       values.sendcloud_shipment_id = shipmentId;
     }
+  } else if (hasLabel && !sentByApp) {
+    console.log(`Sendcloud: order ${order.number} was not sent by this app, not creating a shipment`);
   }
 
   if (isCanceled && appData.sendcloud_shipment_id) {

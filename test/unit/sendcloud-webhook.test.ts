@@ -96,7 +96,9 @@ describe("sendcloud-webhook", () => {
   });
 
   it("stores tracking and creates the Swell shipment once the label exists", async () => {
-    const { req, put, post: postFn } = await setup();
+    const { req, put, post: postFn } = await setup({
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } }),
+    });
 
     await expect(post(req)).resolves.toEqual({ received: true, order_found: true, updated: true });
 
@@ -127,12 +129,59 @@ describe("sendcloud-webhook", () => {
     });
   });
 
+  it("stores tracking without a shipment when the order was not sent by this app", async () => {
+    const { req, put, post: postFn } = await setup();
+
+    await expect(post(req)).resolves.toEqual({ received: true, order_found: true, updated: true });
+
+    expect(postFn).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_parcel_id: 5001,
+          sendcloud_status_id: 1000,
+          sendcloud_status: "Ready to send",
+          sendcloud_tracking_number: "3SABCD123",
+          sendcloud_tracking_url: "https://tracking.example/3SABCD123",
+          sendcloud_carrier: "postnl",
+          sendcloud_status_timestamp: 1000,
+        },
+      },
+    });
+  });
+
+  it("stores tracking without a shipment when nothing is left to ship", async () => {
+    const order = makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } });
+    order.items[0].quantity_shipment_deliverable = 0;
+    const { req, put, post: postFn } = await setup({ order });
+
+    await expect(post(req)).resolves.toEqual({ received: true, order_found: true, updated: true });
+
+    expect(postFn).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith(
+      "/orders/order_1",
+      expect.objectContaining({
+        $app: {
+          sendcloud: expect.objectContaining({
+            sendcloud_tracking_number: "3SABCD123",
+            sendcloud_carrier: "postnl",
+          }),
+        },
+      }),
+    );
+    expect(put.mock.calls[0][1].$app.sendcloud.sendcloud_shipment_id).toBeUndefined();
+  });
+
   it("does not create a shipment when fulfillment is off or there is no label yet", async () => {
-    const off = await setup({ settings: { ...SETTINGS, create_fulfillment: false } });
+    const off = await setup({
+      settings: { ...SETTINGS, create_fulfillment: false },
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } }),
+    });
     await post(off.req);
     expect(off.post).not.toHaveBeenCalled();
 
     const noLabel = await setup({
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } }),
       payload: {
         action: "parcel_status_changed",
         parcel: { ...PARCEL, tracking_number: null, status: { id: 999, message: "No label" } },
