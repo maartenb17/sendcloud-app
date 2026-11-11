@@ -10,6 +10,7 @@ export interface SendcloudSettings {
   integration_id?: number;
   webhook_signature_key?: string;
   sync_on?: 'paid' | 'submitted';
+  skip_test_orders?: boolean;
   shipping_option_code?: string;
   default_weight?: number;
   create_fulfillment?: boolean;
@@ -303,4 +304,8 @@ export function buildOrder(order: any, settings: SendcloudSettings, weightUnit: 
 // app values on a standard record are keyed by app slug in responses
 export function getAppData(record: any, appId: string): Record<string, any> {
   return record?.$app?.[appId] || record?.$app?.sendcloud || {};
+}
+
+export function isTestOrder(order: any): boolean {
+  return order?.test === true || order?.metadata?.test === true;
 }

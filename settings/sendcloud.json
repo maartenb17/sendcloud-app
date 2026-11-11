@@ -55,6 +55,14 @@
       ]
     },
     {
+      "id": "skip_test_orders",
+      "label": "Skip test orders",
+      "type": "boolean",
+      "ui": "toggle",
+      "description": "Skip orders placed in test mode (order.test) and orders with metadata.test set to true. Off by default, so existing stores keep the current behavior.",
+      "default": false
+    },
+    {
       "id": "shipping_option_code",
       "label": "Default shipping option code",
       "type": "short_text",

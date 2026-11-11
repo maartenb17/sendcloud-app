@@ -21,11 +21,16 @@ function setup({
   return { req, put };
 }
 
+const logs: string[] = [];
+
 describe("order-events", () => {
   let fetchMock: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    vi.spyOn(console, "log").mockImplementation(() => {});
+    logs.length = 0;
+    vi.spyOn(console, "log").mockImplementation((message?: unknown) => {
+      logs.push(String(message));
+    });
     vi.spyOn(console, "error").mockImplementation(() => {});
     fetchMock = vi.spyOn(globalThis, "fetch");
   });
@@ -154,5 +159,38 @@ describe("order-events", () => {
     });
 
     await expect(handler(req)).resolves.toBeUndefined();
+  });
+
+  it("still sends a test order when skip test orders is off", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const order = makeOrder({
+      test: true,
+      metadata: { test: true },
+    });
+    const { req } = setup({ order });
+
+    await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a test order only when skip_test_orders is on", async () => {
+    const { req } = setup({
+      settings: { ...SETTINGS, skip_test_orders: true },
+      order: makeOrder({ metadata: { test: true } }),
+    });
+    await handler(req);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100003 is a test order, skipping");
+  });
+
+  it("does not treat a string test flag as a test order", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 1 }] }));
+    const { req } = setup({
+      settings: { ...SETTINGS, skip_test_orders: true },
+      order: makeOrder({ test: "true", metadata: { test: "true" } }),
+    });
+    await handler(req);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

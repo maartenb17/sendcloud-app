@@ -6,6 +6,7 @@ import {
   getSendcloudSettings,
   getWeightUnit,
   hasCredentials,
+  isTestOrder,
   shippableItems,
   upsertOrder,
 } from './lib/sendcloud';
@@ -62,6 +63,11 @@ export default async function (req: SwellRequest) {
 
   const syncEvent = settings.sync_on === 'submitted' ? 'order.submitted' : 'order.paid';
   if (eventType !== syncEvent) {
+    return;
+  }
+
+  if (settings.skip_test_orders === true && isTestOrder(order)) {
+    console.log(`Sendcloud: order ${order.number} is a test order, skipping`);
     return;
   }
 
