@@ -67,7 +67,7 @@
       "label": "Hold orders from a separate order schedule until their invoice is paid",
       "type": "boolean",
       "ui": "toggle",
-      "description": "For a later order of a subscription that ships on its own schedule (order_schedule differs from billing_schedule), wait until that shipment's invoice has status paid. A plan with no order_schedule, including a yearly plan, is sent on the paid or submitted event as usual.",
+      "description": "For an order of a subscription that ships on its own schedule (order_schedule differs from billing_schedule), wait until that shipment's invoice has status paid. The order that created the subscription is sent on the paid or submitted event. A plan with no order_schedule, including a yearly plan, is not held.",
       "default": false
     },
     {

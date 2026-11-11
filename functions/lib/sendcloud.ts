@@ -483,7 +483,9 @@ export interface InvoiceDecision {
   invoice: { id: string; status?: string } | null;
 }
 
-// applies only to a later order of a subscription that ships on its own schedule.
+// applies to every order of a subscription that ships on its own schedule,
+// except the order that created the subscription. A website checkout often has
+// no subscription_id; a dashboard subscription's first order does, and still waits.
 // the returned invoice is unset when none can be claimed, including when another
 // order already holds that invoice id.
 export async function renewalInvoice(swell: SwellAPI, appId: string, order: any): Promise<InvoiceDecision> {
@@ -494,13 +496,7 @@ export async function renewalInvoice(swell: SwellAPI, appId: string, order: any)
   if (!hasSeparateOrderSchedule(subscription)) {
     return { applies: false, invoice: null };
   }
-  const earliest = await swell.get('/orders', {
-    where: { subscription_id: order.subscription_id },
-    sort: 'date_created asc',
-    limit: 1,
-  });
-  const first = earliest?.results?.[0];
-  if (!first || first.id === order.id) {
+  if (subscription?.order_id && subscription.order_id === order.id) {
     return { applies: false, invoice: null };
   }
 
@@ -509,7 +505,7 @@ export async function renewalInvoice(swell: SwellAPI, appId: string, order: any)
     listAround(swell, '/invoices', order.subscription_id, center, INVOICE_WINDOW_MS),
     listAround(swell, '/orders', order.subscription_id, center, INVOICE_WINDOW_MS * 2),
   ]);
-  const orders = siblings.some((entry) => entry.id === order.id) ? siblings : [...siblings, order];
+  const orders = [order, ...siblings.filter((entry) => entry.id !== order.id && entry.id !== subscription.order_id)];
   const invoice = chooseInvoice(order, invoices, orders);
   if (!invoice) {
     return { applies: true, invoice: null };

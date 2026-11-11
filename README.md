@@ -24,7 +24,7 @@ All credentials and options are app settings (`settings/sendcloud.json`). Nothin
 | Webhook Signature Key | no | | Only if your Sendcloud integration shows a separate Webhook Signature Key. Otherwise the Secret Key is used. |
 | Send orders to Sendcloud when | no | Order is paid | `Order is paid` (`order.paid`) or `Order is submitted` (`order.submitted`). |
 | Skip test orders | no | off | Skip orders with boolean `order.test`. A store can also mark an order with boolean `metadata.test`; that flag is optional and is treated the same way. |
-| Hold orders from a separate order schedule until their invoice is paid | no | off | For a later order of a subscription whose `order_schedule` differs from `billing_schedule`, wait until the invoice for that shipment has status `paid`. No invoice yet, or status `pending` or `void`, keeps the order at "Waiting for invoice payment". A plan with no `order_schedule`, including a yearly plan, is not held. |
+| Hold orders from a separate order schedule until their invoice is paid | no | off | For an order of a subscription whose `order_schedule` differs from `billing_schedule`, wait until the invoice for that shipment has status `paid`. The order that created the subscription (`subscription.order_id`) is not held. No invoice yet, or status `pending` or `void`, keeps the order at "Waiting for invoice payment". A plan with no `order_schedule`, including a yearly plan, is not held. |
 | Default shipping option code | no | | Preselects a Sendcloud shipping option on each order, e.g. `postnl:standard`. |
 | Default parcel weight (kg) | no | 1 | Used when the order's items have no shipment weight. |
 | Create Swell shipment when label is created | no | on | Fulfill the Swell order with the Sendcloud tracking number. |

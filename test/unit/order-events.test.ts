@@ -306,14 +306,63 @@ describe("order-events", () => {
     });
   });
 
-  it("sends the first order of a separate schedule, and a yearly renewal, without waiting", async () => {
+  it("holds the first zero-total order of a dashboard subscription", async () => {
+    const order = renewalOrder({ grand_total: 0, paid: true });
+    const { req, put } = setup({
+      settings: { ...SETTINGS, hold_separate_order_schedule: true },
+      order,
+    });
+    req.swell.get = renewalGet(order, {
+      invoices: [{ id: "inv_1", status: "pending", date_created: "2026-11-06T10:29:50.000Z" }],
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_status: "Waiting for invoice payment",
+          sendcloud_invoice_id: "inv_1",
+          sendcloud_error: null,
+        },
+      },
+    });
+  });
+
+  it("holds a renewal when the checkout order is a different order", async () => {
+    const order = renewalOrder({ grand_total: 0, paid: true });
+    const { req, put } = setup({
+      settings: { ...SETTINGS, hold_separate_order_schedule: true },
+      order,
+    });
+    req.swell.get = renewalGet(order, {
+      subscription: { ...SEPARATE, order_id: "checkout_1" },
+      invoices: [{ id: "inv_1", status: "pending", date_created: "2026-11-06T10:29:50.000Z" }],
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith(
+      "/orders/order_1",
+      expect.objectContaining({
+        $app: { sendcloud: expect.objectContaining({ sendcloud_invoice_id: "inv_1" }) },
+      }),
+    );
+  });
+
+  it("sends the order that created the subscription, and a yearly renewal, without waiting", async () => {
     fetchMock.mockImplementation(() => jsonResponse({ data: [{ id: 1 }] }));
-    const first = renewalOrder();
+    const checkout = renewalOrder({ grand_total: 35, subscription_id: "sub_1" });
     const { req } = setup({
       settings: { ...SETTINGS, hold_separate_order_schedule: true },
-      order: first,
+      order: checkout,
     });
-    req.swell.get = renewalGet(first, { earliestId: "order_1" });
+    req.swell.get = renewalGet(checkout, {
+      subscription: { ...SEPARATE, order_id: "order_1" },
+      invoices: [{ id: "inv_1", status: "pending", date_created: checkout.date_created }],
+    });
     await handler(req);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -325,7 +374,7 @@ describe("order-events", () => {
     });
     second.req.swell.get = vi.fn(async (url: string) => {
       if (url === "/orders/order_1") return yearly;
-      if (url === "/subscriptions/sub_1") return { billing_schedule: { interval: "yearly", interval_count: 1 } };
+      if (url === "/subscriptions/sub_1") return { billing_schedule: { interval: "yearly", interval_count: 1 }, order_id: "order_1" };
       if (url === "/settings/shipments") return { weight_unit: "kg" };
       return null;
     });
@@ -450,23 +499,22 @@ function renewalGet(
   {
     invoices = [],
     holders = [],
-    earliestId = "order_0",
     siblings = [order],
+    subscription = SEPARATE,
   }: {
     invoices?: any[];
     holders?: any[];
-    earliestId?: string;
     siblings?: any[];
+    subscription?: Record<string, any>;
   } = {},
 ) {
   return vi.fn(async (url: string, query?: any) => {
     if (url === `/orders/${order.id}`) return order;
-    if (url === "/subscriptions/sub_1") return SEPARATE;
+    if (url === "/subscriptions/sub_1") return subscription;
     if (url === "/settings/shipments") return { weight_unit: "kg" };
     if (url === "/invoices") return { results: invoices };
     if (query?.where?.["$app.sendcloud.sendcloud_invoice_id"]) return { results: holders };
     if (query?.where?.date_created) return { results: siblings };
-    if (query?.sort) return { results: [{ id: earliestId, date_created: "2026-01-01T00:00:00.000Z" }] };
     return null;
   });
 }

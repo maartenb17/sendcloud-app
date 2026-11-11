@@ -234,28 +234,17 @@ async function orderToLink(swell: SwellAPI, invoice: any): Promise<any | null> {
   if (!Number.isFinite(center)) {
     return null;
   }
-  const [earliest, around] = await Promise.all([
-    swell.get('/orders', {
-      where: { subscription_id: invoice.subscription_id },
-      sort: 'date_created asc',
-      limit: 1,
-    }),
-    swell.get('/orders', {
-      where: {
-        subscription_id: invoice.subscription_id,
-        date_created: {
-          $gte: new Date(center - INVOICE_WINDOW_MS).toISOString(),
-          $lte: new Date(center + INVOICE_WINDOW_MS).toISOString(),
-        },
+  const around = await swell.get('/orders', {
+    where: {
+      subscription_id: invoice.subscription_id,
+      date_created: {
+        $gte: new Date(center - INVOICE_WINDOW_MS).toISOString(),
+        $lte: new Date(center + INVOICE_WINDOW_MS).toISOString(),
       },
-      limit: 50,
-      expand: ORDER_EXPAND,
-    }),
-  ]);
-  const firstId = earliest?.results?.[0]?.id;
-  const closest = orderClosestToInvoice(invoice, around?.results || []);
-  if (!closest || closest.id === firstId) {
-    return null;
-  }
-  return closest;
+    },
+    limit: 50,
+    expand: ORDER_EXPAND,
+  });
+  const candidates = (around?.results || []).filter((entry: any) => entry.id !== subscription.order_id);
+  return orderClosestToInvoice(invoice, candidates);
 }
