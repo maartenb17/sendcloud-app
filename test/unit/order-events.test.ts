@@ -188,6 +188,15 @@ describe("order-events", () => {
     expect(logs).toContain("Sendcloud: order 100003 is a test order, skipping");
   });
 
+  it("does not send a canceled order", async () => {
+    const { req } = setup({
+      order: makeOrder({ status: "canceled", canceled: true }),
+    });
+    await handler(req);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100003 is canceled, skipping");
+  });
+
   it("does not treat a string test flag as a test order", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 1 }] }));
     const { req } = setup({
@@ -387,6 +396,38 @@ describe("order-events", () => {
         $app: { sendcloud: expect.objectContaining({ sendcloud_order_id: 671, sendcloud_invoice_id: "inv_1" }) },
       }),
     );
+  });
+
+  it("does not send a renewal when its invoice is paid after the order was canceled", async () => {
+    const order = renewalOrder({
+      status: "canceled",
+      canceled: true,
+      paid: false,
+      grand_total: 0,
+      $app: { sendcloud: { sendcloud_status: "Waiting for invoice payment", sendcloud_invoice_id: "inv_1" } },
+    });
+    const put = vi.fn().mockResolvedValue({});
+    const req = createMockRequest({
+      data: { id: "inv_1", $event: { type: "invoice.payment_succeeded" } } as any,
+      appId: "sendcloud",
+      swell: {
+        settings: vi.fn().mockResolvedValue({ sendcloud: { ...SETTINGS, hold_separate_order_schedule: true } }),
+        get: vi.fn(async (url: string, query?: any) => {
+          if (url === "/invoices/inv_1") {
+            return { id: "inv_1", status: "paid", subscription_id: "sub_1", date_created: order.date_created };
+          }
+          if (query?.where?.["$app.sendcloud.sendcloud_invoice_id"]) return { results: [order] };
+          return null;
+        }),
+        put,
+      },
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100996 is canceled, skipping");
   });
 });
 

@@ -67,7 +67,7 @@
           "label": "Send to Sendcloud",
           "function": "send-to-sendcloud",
           "loading_label": "Sending to Sendcloud…",
-          "hint": "Sends up to 10 selected orders. Waiting and test orders are sent too. An order already in Sendcloud is updated, unless it has a label."
+          "hint": "Sends up to 10 selected orders. Waiting and test orders are sent too. Unpaid and canceled orders are skipped. An order already in Sendcloud is updated, unless it has a label."
         }
       ]
     },
@@ -79,7 +79,7 @@
           "label": "Send to Sendcloud",
           "function": "send-to-sendcloud",
           "loading_label": "Sending to Sendcloud…",
-          "hint": "Sends this order, or updates it in Sendcloud when it is already there and has no label"
+          "hint": "Sends this order, or updates it in Sendcloud when it is already there and has no label. Unpaid and canceled orders are skipped."
         }
       ],
       "tabs": [

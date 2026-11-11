@@ -8,6 +8,7 @@ import {
   getSendcloudSettings,
   hasCredentials,
   hasSeparateOrderSchedule,
+  isCanceledOrder,
   isTestOrder,
   orderClosestToInvoice,
   pushOrder,
@@ -80,6 +81,10 @@ async function handleOrder(req: SwellRequest) {
 
   const syncEvent = settings.sync_on === 'submitted' ? 'order.submitted' : 'order.paid';
   if (eventType !== syncEvent) {
+    return;
+  }
+  if (isCanceledOrder(order)) {
+    console.log(`Sendcloud: order ${order.number} is canceled, skipping`);
     return;
   }
   if (settings.skip_test_orders === true && isTestOrder(order)) {
@@ -170,6 +175,10 @@ async function handleInvoice(req: SwellRequest) {
   }
   if (settings.skip_test_orders === true && isTestOrder(order)) {
     console.log(`Sendcloud: order ${order.number} is a test order, skipping`);
+    return;
+  }
+  if (isCanceledOrder(order)) {
+    console.log(`Sendcloud: order ${order.number} is canceled, skipping`);
     return;
   }
   if (invoice.status !== 'paid') {

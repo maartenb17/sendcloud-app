@@ -5,6 +5,7 @@ import {
   getAppData,
   getSendcloudSettings,
   hasCredentials,
+  isCanceledOrder,
   isTestOrder,
   pushOrder,
   shippableItems,
@@ -109,6 +110,13 @@ interface Outcome {
 
 async function sendOne(req: SwellRequest, settings: Awaited<ReturnType<typeof getSendcloudSettings>>, order: any): Promise<Outcome> {
   const appData = getAppData(order, req.appId || 'sendcloud');
+  if (isCanceledOrder(order)) {
+    console.log(`Sendcloud: order ${order.number} is canceled, skipping`);
+    return { status: 'skipped', reason: 'order is canceled' };
+  }
+  if (order.paid !== true) {
+    return { status: 'skipped', reason: 'order is not paid' };
+  }
   if (!shippableItems(order).length) {
     return { status: 'failed', reason: 'no shippable items' };
   }

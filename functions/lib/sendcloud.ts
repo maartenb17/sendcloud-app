@@ -319,6 +319,11 @@ export function isTestOrder(order: any): boolean {
   return order?.test === true || order?.metadata?.test === true;
 }
 
+// live orders set both; either one is enough
+export function isCanceledOrder(order: any): boolean {
+  return order?.status === 'canceled' || order?.canceled === true;
+}
+
 // true when the subscription ships on a different cadence than it bills.
 // an empty order_schedule means orders follow the billing schedule.
 export function hasSeparateOrderSchedule(subscription: any): boolean {
