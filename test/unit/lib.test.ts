@@ -325,7 +325,7 @@ describe("subscription plan on the packing slip", () => {
 
 const SHOW_COMPONENTS = { ...SETTINGS, show_bundle_components: true };
 
-function componentOrder(item: Record<string, any>, grandTotal = 360) {
+function componentOrder(item: Record<string, any>, grandTotal = 480) {
   return makeOrder({
     currency: "EUR",
     grand_total: grandTotal,
@@ -338,8 +338,8 @@ function familyPack(overrides: Record<string, any> = {}) {
     id: "family",
     delivery: "shipment",
     quantity: 1,
-    price: 360,
-    price_total: 360,
+    price: 480,
+    price_total: 480,
     shipment_weight: 660,
     product_id: "family",
     product: { name: "SMPL72 Family Pack", sku: "SMPL72-4V3-4" },
@@ -350,7 +350,7 @@ function familyPack(overrides: Record<string, any> = {}) {
         product_name: "SMPL72",
         quantity: 4,
         quantity_total: 4,
-        price: 90,
+        price: 120,
         shipment_weight: 0,
         product: { name: "SMPL72", sku: "SMPL72-EM-1", shipment_weight: 165 },
       },
@@ -371,8 +371,8 @@ describe("bundle components on the packing slip", () => {
       name: "SMPL72 Family Pack → SMPL72",
       quantity: 4,
       sku: "SMPL72-EM-1",
-      unit_price: { value: 90, currency: "EUR" },
-      total_price: { value: 360, currency: "EUR" },
+      unit_price: { value: 120, currency: "EUR" },
+      total_price: { value: 480, currency: "EUR" },
       measurement: { weight: { value: 0.165, unit: "kg" } },
     });
     expect(result.shipping_details.measurement.weight.value).toBe(plain.shipping_details.measurement.weight.value);
@@ -499,19 +499,71 @@ describe("bundle components on the packing slip", () => {
         quantity: 2,
         sku: "POUCH",
         unit_price: { value: 10, currency: "EUR" },
-        total_price: { value: 20, currency: "EUR" },
+        total_price: { value: 40, currency: "EUR" },
       }),
       expect.objectContaining({
         name: "Kit → Bottle",
         quantity: 2,
         sku: "BOTTLE",
         unit_price: { value: 5, currency: "EUR" },
-        total_price: { value: 10, currency: "EUR" },
+        total_price: { value: 20, currency: "EUR" },
         measurement: { weight: { value: 0.05, unit: "kg" } },
       }),
     ]);
     expect(result.shipping_details.measurement.weight.value).toBe(0.3);
     expect(result.shipping_details.measurement.weight.value).toBe(plain.shipping_details.measurement.weight.value);
+    const totals = result.order_details.order_items.map((line: any) => line.total_price.value);
+    expect(totals.reduce((sum: number, value: number) => sum + value, 0)).toBe(60);
+  });
+
+  it("puts the rounding remainder on the last component", () => {
+    const order = componentOrder(
+      {
+        id: "kit",
+        delivery: "shipment",
+        quantity: 1,
+        price: 10,
+        price_total: 10,
+        shipment_weight: 3,
+        product_id: "kit",
+        product: { name: "Kit" },
+        bundle_items: [
+          { name: "A", price: 10 },
+          { name: "B", price: 20 },
+          { name: "C", price: 30 },
+        ].map(({ name, price }) => ({
+          id: name,
+          product_id: name,
+          quantity: 1,
+          quantity_total: 1,
+          price,
+          product: { name, sku: name },
+        })),
+      },
+      10,
+    );
+    const result: any = buildOrder(order, SHOW_COMPONENTS as any, "g");
+    const totals = result.order_details.order_items.map((line: any) => line.total_price.value);
+
+    expect(result.order_details.order_items.map((line: any) => line.unit_price.value)).toEqual([10, 20, 30]);
+    expect(totals).toEqual([1.67, 3.33, 5]);
+    expect(totals.reduce((sum: number, value: number) => sum + value, 0)).toBe(10);
+  });
+
+  it("gives a discounted bundle total to its only component", () => {
+    const order = componentOrder(
+      familyPack({
+        price: 480,
+        price_total: 360,
+      }),
+      360,
+    );
+    const result: any = buildOrder(order, SHOW_COMPONENTS as any, "g");
+
+    expect(result.order_details.order_items[0]).toMatchObject({
+      unit_price: { value: 120, currency: "EUR" },
+      total_price: { value: 360, currency: "EUR" },
+    });
   });
 
   it("uses the English bundle and component names", async () => {

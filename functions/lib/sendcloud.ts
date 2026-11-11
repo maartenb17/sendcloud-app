@@ -279,12 +279,33 @@ function componentUnitPrice(child: any): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-function componentTotalPrice(child: any, unit: number, quantity: number): number {
-  if (child?.price_total == null || child?.price_total === '') {
-    return unit * quantity;
-  }
-  const value = Number(child.price_total);
-  return Number.isFinite(value) ? value : unit * quantity;
+function roundCents(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+// same basis as a normal line: price_total is the line total after discount
+function bundleLineTotal(parent: any): number {
+  const total = Number(parent?.price_total);
+  return Number.isFinite(total) ? roundCents(total) : 0;
+}
+
+// one component takes the whole bundle total. several split by unit price × quantity,
+// or by quantity when none of them has a price. the last line absorbs the rounding.
+function componentShareTotals(lines: { unit: number; quantity: number }[], bundleTotal: number): number[] {
+  if (!lines.length || bundleTotal === 0) return lines.map(() => 0);
+  const priced = lines.map((line) => line.unit * line.quantity);
+  const pricedSum = priced.reduce((sum, value) => sum + value, 0);
+  const weights = pricedSum > 0 ? priced : lines.map((line) => line.quantity);
+  const weightSum = weights.reduce((sum, value) => sum + value, 0);
+  if (weightSum <= 0) return lines.map(() => 0);
+
+  let allocated = 0;
+  return lines.map((_, index) => {
+    if (index === lines.length - 1) return roundCents(bundleTotal - allocated);
+    const share = roundCents((bundleTotal * weights[index]) / weightSum);
+    allocated = roundCents(allocated + share);
+    return share;
+  });
 }
 
 // line weight is the whole component row. an empty row uses the product weight per unit.
@@ -319,11 +340,15 @@ function expandBundle(item: any): any[] {
       component_name: componentSlipName(item, child),
       component_sku: child.product?.sku || child.sku || undefined,
       component_unit_price: unit,
-      component_total_price: componentTotalPrice(child, unit, quantity),
       component_unit_weight: componentUnitWeight(child, quantity),
     });
   }
-  return lines.length ? lines : [item];
+  if (!lines.length) return [item];
+  const shares = componentShareTotals(
+    lines.map((line) => ({ unit: line.component_unit_price, quantity: line.quantity })),
+    bundleLineTotal(item),
+  );
+  return lines.map((line, index) => ({ ...line, component_total_price: shares[index] }));
 }
 
 // POST /api/v3/orders payload for one Swell order
