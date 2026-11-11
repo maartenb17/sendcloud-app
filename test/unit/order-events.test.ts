@@ -496,6 +496,12 @@ describe("order-events", () => {
     await handler(req);
 
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(req.swell.get).toHaveBeenCalledWith("/invoices", {
+      where: {
+        subscription_id: "sub_1",
+        status: { $in: ["pending", "unpaid"] },
+      },
+    });
     expect(put).toHaveBeenCalledWith("/orders/order_1", {
       $app: {
         sendcloud: {
@@ -690,7 +696,13 @@ function renewalGet(
     if (url === `/orders/${order.id}`) return order;
     if (url === "/subscriptions/sub_1") return subscription;
     if (url === "/settings/shipments") return { weight_unit: "kg" };
-    if (url === "/invoices") return { results: invoices };
+    if (url === "/invoices") {
+      const statuses = query?.where?.status?.$in;
+      const results = Array.isArray(statuses)
+        ? invoices.filter((invoice) => statuses.includes(invoice.status))
+        : invoices;
+      return { results };
+    }
     if (query?.where?.["$app.sendcloud.sendcloud_invoice_id"]) return { results: holders };
     if (query?.where?.date_created) return { results: siblings };
     return null;

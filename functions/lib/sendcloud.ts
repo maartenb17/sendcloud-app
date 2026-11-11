@@ -716,13 +716,14 @@ export async function renewalInvoice(swell: SwellAPI, appId: string, order: any)
   if (invoice.status !== 'paid') {
     return { applies: true, invoice: { id: invoice.id, status: invoice.status } };
   }
-  const history = await swell.get('/invoices', {
-    where: { subscription_id: order.subscription_id },
-    sort: 'date_created asc',
-    limit: 100,
+  const openInvoices = await swell.get('/invoices', {
+    where: {
+      subscription_id: order.subscription_id,
+      status: { $in: ['pending', 'unpaid'] },
+    },
   });
   const overdue =
-    subscriptionInArrears(subscription) || earlierInvoiceInArrears(invoice, history?.results || []);
+    subscriptionInArrears(subscription) || earlierInvoiceInArrears(invoice, openInvoices?.results || []);
   return {
     applies: true,
     invoice: { id: invoice.id, status: invoice.status },
