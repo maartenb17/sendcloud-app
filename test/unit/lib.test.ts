@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   buildOrder,
   chooseInvoice,
@@ -7,11 +7,13 @@ import {
   hasSeparateOrderSchedule,
   isCanceledOrder,
   isTestOrder,
+  pushOrder,
   splitAddress,
   toPythonJson,
   verifySignature,
+  withSubscriptionPlans,
 } from "../../functions/lib/sendcloud";
-import { SETTINGS, hmacHex, makeOrder } from "../helpers/fixtures";
+import { SETTINGS, hmacHex, jsonResponse, makeOrder } from "../helpers/fixtures";
 
 describe("splitAddress", () => {
   it.each([
@@ -122,6 +124,159 @@ describe("hasSeparateOrderSchedule", () => {
         order_schedule: { interval: "monthly" },
       }),
     ).toBe(false);
+  });
+});
+
+function subscriptionItem(overrides: Record<string, any> = {}) {
+  return {
+    id: "item_1",
+    delivery: "shipment",
+    quantity: 1,
+    shipment_weight: 1,
+    price: 35,
+    price_total: 35,
+    product_id: "prod_1",
+    product: { name: "SMPL72", sku: "SMPL72" },
+    purchase_option: { type: "standard", subscription: { plan_id: "plan_1" } },
+    ...overrides,
+  };
+}
+
+async function slipName(order: any, plan: any) {
+  const get = vi.fn(async (url: string) => (String(url).startsWith("/subscription-plans/") ? plan : null));
+  const named = await withSubscriptionPlans({ get } as any, order);
+  const result: any = buildOrder(named, SETTINGS as any, "kg");
+  return { name: result.order_details.order_items.map((item: any) => item.name), description: result.order_details.order_items.map((item: any) => item.description), get };
+}
+
+describe("subscription plan on the packing slip", () => {
+  it("uses the Dutch plan description", async () => {
+    const order = makeOrder({
+      account: { locale: "nl" },
+      items: [subscriptionItem({ variant: { name: "Black" } })],
+    });
+    const { name, description, get } = await slipName(order, {
+      description: "Kwartaalabonnement",
+      name: "Monthly",
+    });
+
+    expect(name).toEqual(["SMPL72 (Kwartaalabonnement)"]);
+    expect(description).toEqual(["Black"]);
+    expect(get).toHaveBeenCalledWith("/subscription-plans/plan_1", { $locale: "nl" });
+  });
+
+  it("uses the English plan description", async () => {
+    const order = makeOrder({
+      account: { locale: "en" },
+      items: [subscriptionItem()],
+    });
+    const { name, get } = await slipName(order, { description: "Quarterly subscription", name: "Monthly" });
+
+    expect(name).toEqual(["SMPL72 (Quarterly subscription)"]);
+    expect(get).toHaveBeenCalledWith("/subscription-plans/plan_1", { $locale: "en" });
+  });
+
+  it("keeps the base plan text when German has no translation", async () => {
+    const order = makeOrder({
+      account: { locale: "de" },
+      items: [subscriptionItem()],
+    });
+    const { name, get } = await slipName(order, { description: "Quarterly subscription", name: "Monthly" });
+
+    expect(name).toEqual(["SMPL72 (Quarterly subscription)"]);
+    expect(get).toHaveBeenCalledWith("/subscription-plans/plan_1", { $locale: "de" });
+  });
+
+  it("removes soft hyphens and other invisible characters", async () => {
+    const order = makeOrder({
+      account: { locale: "nl" },
+      items: [subscriptionItem({ product: { name: "SMPL\u00AD72\u200B" } })],
+    });
+    const { name } = await slipName(order, { description: "Kwartaal\u00ADabonnement", name: "Monthly" });
+
+    expect(name).toEqual(["SMPL72 (Kwartaalabonnement)"]);
+  });
+
+  it("reads the plan from the bundle parent and prefers it to the English plan name", async () => {
+    const order = makeOrder({
+      account: { locale: "nl" },
+      items: [
+        {
+          id: "parent",
+          delivery: null,
+          product: { name: "Family Pack" },
+          purchase_option: {
+            type: "subscription",
+            plan_id: "plan_1",
+            plan_name: "Monthly",
+            plan_description: "Kwartaalabonnement",
+          },
+          bundle_items: [{ id: "child" }],
+        },
+        subscriptionItem({
+          id: "child",
+          product_id: "bottle",
+          product: { name: "SMPL72" },
+          purchase_option: undefined,
+        }),
+      ],
+    });
+    const { name, get } = await slipName(order, {});
+
+    expect(name).toEqual(["SMPL72 (Kwartaalabonnement)"]);
+    expect(get).toHaveBeenCalledWith("/subscription-plans/plan_1", { $locale: "nl" });
+  });
+
+  it("does not add a plan to a one-off item", async () => {
+    const order = makeOrder({
+      account: { locale: "nl" },
+      items: [
+        subscriptionItem(),
+        {
+          id: "once",
+          delivery: "shipment",
+          quantity: 1,
+          price: 120,
+          price_total: 120,
+          product_id: "prod_2",
+          product: { name: "SMPL72" },
+          purchase_option: { type: "standard" },
+        },
+      ],
+    });
+    const { name, get } = await slipName(order, { description: "Kwartaalabonnement" });
+
+    expect(name).toEqual(["SMPL72 (Kwartaalabonnement)", "SMPL72"]);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the name unchanged when the setting is off", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ data: [{ id: 1 }] }));
+    const order = makeOrder({
+      account: { locale: "nl", email: "jan@example.com" },
+      items: [
+        subscriptionItem({
+          product: { name: "SMPL\u00AD72", sku: "SMPL72" },
+          purchase_option: {
+            type: "subscription",
+            plan_id: "plan_1",
+            plan_description: "Kwartaalabonnement",
+          },
+        }),
+      ],
+    });
+    const get = vi.fn(async (url: string) => {
+      if (url === "/settings/shipments") return { weight_unit: "kg" };
+      if (url === "/products/prod_1") return { name: "SMPL\u00AD72" };
+      return { description: "should-not-be-used" };
+    });
+
+    await pushOrder({ get, put: vi.fn().mockResolvedValue({}) } as any, SETTINGS as any, order, (data) => data);
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body[0].order_details.order_items[0].name).toBe("SMPL72");
+    expect(get.mock.calls.map((call) => call[0])).not.toContain("/subscription-plans/plan_1");
+    fetchMock.mockRestore();
   });
 });
 

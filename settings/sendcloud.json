@@ -71,6 +71,14 @@
       "default": false
     },
     {
+      "id": "show_subscription_plan",
+      "label": "Show the subscription plan on the packing slip",
+      "type": "boolean",
+      "ui": "toggle",
+      "description": "Append the subscription plan to the item name on the packing slip, in the customer's language. One-off items are left unchanged. Off by default, so existing stores keep the current packing slip.",
+      "default": false
+    },
+    {
       "id": "shipping_option_code",
       "label": "Default shipping option code",
       "type": "short_text",

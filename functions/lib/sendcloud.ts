@@ -12,6 +12,7 @@ export interface SendcloudSettings {
   sync_on?: 'paid' | 'submitted';
   skip_test_orders?: boolean;
   hold_separate_order_schedule?: boolean;
+  show_subscription_plan?: boolean;
   shipping_option_code?: string;
   default_weight?: number;
   create_fulfillment?: boolean;
@@ -230,6 +231,20 @@ function formatAddress(address: any, email?: string) {
   };
 }
 
+// soft hyphens and other invisible characters must not reach the packing slip
+export function visibleText(value: unknown): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value.replace(/[\p{Cf}\p{Cc}]/gu, '').trim();
+}
+
+export function packingSlipName(item: any): string {
+  const base = visibleText(item?.product?.name || item?.product_name) || 'Item';
+  const plan = visibleText(item?.packing_slip_plan);
+  return plan ? `${base} (${plan})` : base;
+}
+
 // POST /api/v3/orders payload for one Swell order
 export function buildOrder(order: any, settings: SendcloudSettings, weightUnit: string): object {
   const currency = order.currency;
@@ -244,7 +259,7 @@ export function buildOrder(order: any, settings: SendcloudSettings, weightUnit: 
       item_id: item.id,
       product_id: item.product_id,
       variant_id: item.variant_id || undefined,
-      name: (item.product?.name || item.product_name || 'Item').slice(0, 255),
+      name: packingSlipName(item).slice(0, 255),
       description: item.variant?.name || item.variant_name || undefined,
       quantity,
       sku: item.variant?.sku || item.product?.sku || undefined,
@@ -400,6 +415,93 @@ export async function withLocalizedNames(swell: SwellAPI, order: any): Promise<a
   return { ...order, items };
 }
 
+function subscriptionPlanId(item: any): string {
+  const id =
+    item?.purchase_option?.plan_id ||
+    item?.purchase_option?.subscription?.plan_id ||
+    item?.product_option?.plan?.id;
+  return typeof id === 'string' ? id : '';
+}
+
+// a renewal is often type "standard" with a nested plan id. a one-off has neither.
+function isSubscriptionLine(item: any, parent?: any): boolean {
+  if (subscriptionPlanId(item) || subscriptionPlanId(parent)) {
+    return true;
+  }
+  if (item?.purchase_option?.type === 'subscription' || parent?.purchase_option?.type === 'subscription') {
+    return true;
+  }
+  return Boolean(item?.subscription_id || parent?.subscription_id);
+}
+
+// description on the line, then on the bundle parent. plan_name is English, so it is last.
+export function orderLinePlanText(item: any, parent?: any): string {
+  for (const entry of [item, parent]) {
+    const description =
+      visibleText(entry?.product_option?.plan?.description) || visibleText(entry?.purchase_option?.plan_description);
+    if (description) {
+      return description;
+    }
+  }
+  for (const entry of [item, parent]) {
+    const name = visibleText(entry?.purchase_option?.plan_name);
+    if (name) {
+      return name;
+    }
+  }
+  return '';
+}
+
+function bundleParent(order: any, item: any): any | undefined {
+  if (!item?.id) {
+    return undefined;
+  }
+  return (order?.items || []).find(
+    (entry: any) => entry !== item && entry?.bundle_items?.some((child: any) => child?.id === item.id),
+  );
+}
+
+// plan text for the packing slip. with a customer language, the plan record wins.
+// otherwise, or when that record has no text, the order line does. no text means no suffix.
+export async function withSubscriptionPlans(swell: SwellAPI, order: any): Promise<any> {
+  const locale = customerLocale(order);
+  const cache = new Map<string, string>();
+
+  async function planFromApi(planId: string): Promise<string> {
+    if (!locale || !planId) {
+      return '';
+    }
+    const key = `${locale}:${planId}`;
+    const cached = cache.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    let text = '';
+    try {
+      const plan = await swell.get(`/subscription-plans/${planId}`, { $locale: locale });
+      text = visibleText(plan?.description) || visibleText(plan?.name);
+    } catch (err: any) {
+      console.error(
+        `Sendcloud: could not load subscription plan ${planId} in ${locale} - ${err?.message || err}`,
+      );
+    }
+    cache.set(key, text);
+    return text;
+  }
+
+  const items = [];
+  for (const item of order.items || []) {
+    const parent = bundleParent(order, item);
+    let plan = '';
+    if (isSubscriptionLine(item, parent)) {
+      const planId = subscriptionPlanId(item) || subscriptionPlanId(parent);
+      plan = (await planFromApi(planId)) || orderLinePlanText(item, parent);
+    }
+    items.push(plan ? { ...item, packing_slip_plan: plan } : item);
+  }
+  return { ...order, items };
+}
+
 function time(value: unknown): number {
   const parsed = new Date(value as string).getTime();
   return Number.isFinite(parsed) ? parsed : NaN;
@@ -529,7 +631,9 @@ export async function pushOrder(
 ): Promise<{ id?: number }> {
   const weightUnit = await getWeightUnit(swell);
   const localized = await withLocalizedNames(swell, order);
-  const created = await upsertOrder(settings, buildOrder(localized, settings, weightUnit));
+  const named =
+    settings.show_subscription_plan === true ? await withSubscriptionPlans(swell, localized) : localized;
+  const created = await upsertOrder(settings, buildOrder(named, settings, weightUnit));
   await swell.put(
     `/orders/${order.id}`,
     values({
