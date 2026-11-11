@@ -45,6 +45,10 @@
       "type": "string",
       "description": "Why no Swell shipment was created for the parcel"
     },
+    "sendcloud_invoice_id": {
+      "type": "objectid",
+      "description": "Invoice this shipment is held for, when the subscription ships on its own schedule"
+    },
     "sendcloud_status_timestamp": {
       "type": "float",
       "description": "Timestamp of the latest applied Sendcloud webhook, used to skip out-of-order updates"

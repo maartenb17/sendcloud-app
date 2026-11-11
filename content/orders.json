@@ -66,6 +66,12 @@
       "label": "Error",
       "type": "long_text",
       "readonly": true
+    },
+    {
+      "id": "sendcloud_invoice_id",
+      "label": "Invoice",
+      "type": "short_text",
+      "readonly": true
     }
   ],
   "views": [
@@ -139,6 +145,9 @@
                   "$ne": null
                 }
               }
+            },
+            {
+              "id": "sendcloud_invoice_id"
             },
             {
               "id": "sendcloud_error",
