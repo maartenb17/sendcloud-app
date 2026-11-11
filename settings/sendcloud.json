@@ -79,6 +79,14 @@
       "default": false
     },
     {
+      "id": "show_bundle_components",
+      "label": "Show bundle components on the packing slip",
+      "type": "boolean",
+      "ui": "toggle",
+      "description": "Replace a bundle line with one line per component, named Bundle → Component. A subscription plan stays on the bundle name. Component names use the customer's language. The order total and the parcel weight stay the same. Off by default, so existing stores keep the current packing slip.",
+      "default": false
+    },
+    {
       "id": "shipping_option_code",
       "label": "Default shipping option code",
       "type": "short_text",

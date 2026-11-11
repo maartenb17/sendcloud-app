@@ -323,6 +323,253 @@ describe("subscription plan on the packing slip", () => {
   });
 });
 
+const SHOW_COMPONENTS = { ...SETTINGS, show_bundle_components: true };
+
+function componentOrder(item: Record<string, any>, grandTotal = 360) {
+  return makeOrder({
+    currency: "EUR",
+    grand_total: grandTotal,
+    items: [item],
+  });
+}
+
+function familyPack(overrides: Record<string, any> = {}) {
+  return {
+    id: "family",
+    delivery: "shipment",
+    quantity: 1,
+    price: 360,
+    price_total: 360,
+    shipment_weight: 660,
+    product_id: "family",
+    product: { name: "SMPL72 Family Pack", sku: "SMPL72-4V3-4" },
+    bundle_items: [
+      {
+        id: "pouch",
+        product_id: "smpl",
+        product_name: "SMPL72",
+        quantity: 4,
+        quantity_total: 4,
+        price: 90,
+        shipment_weight: 0,
+        product: { name: "SMPL72", sku: "SMPL72-EM-1", shipment_weight: 165 },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+describe("bundle components on the packing slip", () => {
+  it("replaces one Family Pack with four pouches when the component weight is empty", () => {
+    const order = componentOrder(familyPack());
+    const result: any = buildOrder(order, SHOW_COMPONENTS as any, "g");
+    const plain: any = buildOrder(order, SETTINGS as any, "g");
+    const line = result.order_details.order_items[0];
+
+    expect(result.order_details.order_items).toHaveLength(1);
+    expect(line).toMatchObject({
+      name: "SMPL72 Family Pack → SMPL72",
+      quantity: 4,
+      sku: "SMPL72-EM-1",
+      unit_price: { value: 90, currency: "EUR" },
+      total_price: { value: 360, currency: "EUR" },
+      measurement: { weight: { value: 0.165, unit: "kg" } },
+    });
+    expect(result.shipping_details.measurement.weight.value).toBe(plain.shipping_details.measurement.weight.value);
+    expect(result.payment_details.total_price).toEqual(plain.payment_details.total_price);
+  });
+
+  it("uses quantity_total for two subscribed Family Packs and keeps the plan on the bundle", () => {
+    const order = componentOrder(
+      familyPack({
+        quantity: 2,
+        price: 480,
+        price_total: 960,
+        shipment_weight: 1320,
+        packing_slip_plan: "Kwartaalabonnement",
+        bundle_items: [
+          {
+            id: "pouch",
+            product_id: "smpl",
+            product_name: "SMPL72",
+            quantity: 4,
+            quantity_total: 8,
+            price: 120,
+            shipment_weight: 1320,
+            product: { name: "SMPL72", sku: "SMPL72-EM-1", shipment_weight: 165 },
+          },
+        ],
+      }),
+      960,
+    );
+    const result: any = buildOrder(order, SHOW_COMPONENTS as any, "g");
+    const plain: any = buildOrder(order, SETTINGS as any, "g");
+
+    expect(result.order_details.order_items[0]).toMatchObject({
+      name: "SMPL72 Family Pack → SMPL72 (Kwartaalabonnement)",
+      quantity: 8,
+      sku: "SMPL72-EM-1",
+      unit_price: { value: 120, currency: "EUR" },
+      total_price: { value: 960, currency: "EUR" },
+      measurement: { weight: { value: 0.165, unit: "kg" } },
+    });
+    expect(result.shipping_details.measurement.weight.value).toBe(1.32);
+    expect(result.shipping_details.measurement.weight.value).toBe(plain.shipping_details.measurement.weight.value);
+  });
+
+  it("sends the Investors Bonus component at price 0", () => {
+    const order = componentOrder(
+      {
+        id: "bonus",
+        delivery: "shipment",
+        quantity: 1,
+        price: 0,
+        price_total: 0,
+        shipment_weight: 165,
+        product_id: "bonus",
+        product: { name: "SMPL72 Investors Bonus", sku: "SMPL72-IB-1" },
+        bundle_items: [
+          {
+            id: "pouch",
+            product_id: "smpl",
+            product_name: "SMPL72",
+            quantity: 1,
+            quantity_total: 1,
+            price: 0,
+            shipment_weight: 0,
+            product: { name: "SMPL72", sku: "SMPL72-EM-1", shipment_weight: 165 },
+          },
+        ],
+      },
+      0,
+    );
+    const result: any = buildOrder(order, SHOW_COMPONENTS as any, "g");
+    const plain: any = buildOrder(order, SETTINGS as any, "g");
+
+    expect(result.order_details.order_items[0]).toMatchObject({
+      name: "SMPL72 Investors Bonus → SMPL72",
+      quantity: 1,
+      sku: "SMPL72-EM-1",
+      unit_price: { value: 0, currency: "EUR" },
+      total_price: { value: 0, currency: "EUR" },
+      measurement: { weight: { value: 0.165, unit: "kg" } },
+    });
+    expect(result.shipping_details.measurement.weight.value).toBe(plain.shipping_details.measurement.weight.value);
+  });
+
+  it("lists two different components and multiplies quantity when quantity_total is absent", () => {
+    const order = componentOrder(
+      {
+        id: "kit",
+        delivery: "shipment",
+        quantity: 2,
+        price: 30,
+        price_total: 60,
+        shipment_weight: 300,
+        product_id: "kit",
+        product: { name: "Kit" },
+        bundle_items: [
+          {
+            id: "pouch",
+            product_id: "pouch",
+            quantity: 1,
+            quantity_total: 2,
+            price: 10,
+            shipment_weight: 200,
+            product: { name: "Pouch", sku: "POUCH" },
+          },
+          {
+            id: "bottle",
+            product_id: "bottle",
+            quantity: 1,
+            price: 5,
+            shipment_weight: 0,
+            product: { name: "Bottle", sku: "BOTTLE", shipment_weight: 50 },
+          },
+        ],
+      },
+      60,
+    );
+    const result: any = buildOrder(order, SHOW_COMPONENTS as any, "g");
+    const plain: any = buildOrder(order, SETTINGS as any, "g");
+
+    expect(result.order_details.order_items).toEqual([
+      expect.objectContaining({
+        name: "Kit → Pouch",
+        quantity: 2,
+        sku: "POUCH",
+        unit_price: { value: 10, currency: "EUR" },
+        total_price: { value: 20, currency: "EUR" },
+      }),
+      expect.objectContaining({
+        name: "Kit → Bottle",
+        quantity: 2,
+        sku: "BOTTLE",
+        unit_price: { value: 5, currency: "EUR" },
+        total_price: { value: 10, currency: "EUR" },
+        measurement: { weight: { value: 0.05, unit: "kg" } },
+      }),
+    ]);
+    expect(result.shipping_details.measurement.weight.value).toBe(0.3);
+    expect(result.shipping_details.measurement.weight.value).toBe(plain.shipping_details.measurement.weight.value);
+  });
+
+  it("uses the English bundle and component names", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ data: [{ id: 1 }] }));
+    const order = makeOrder({
+      account: { locale: "en", email: "jan@example.com" },
+      items: [
+        familyPack({
+          product: undefined,
+          product_name: "SMPL72 Familie\u00ADpakket",
+          bundle_items: [
+            {
+              id: "pouch",
+              product_id: "smpl",
+              product_name: "SMPL72",
+              quantity: 4,
+              quantity_total: 4,
+              price: 90,
+              shipment_weight: 0,
+            },
+          ],
+        }),
+      ],
+    });
+    const get = vi.fn(async (url: string) => {
+      if (url === "/settings/shipments") return { weight_unit: "g" };
+      if (url === "/products/family") return { name: "SMPL72 Family\u00AD Pack", sku: "SMPL72-4V3-4" };
+      if (url === "/products/smpl") return { name: "SMPL\u00AD72", sku: "SMPL72-EM-1", shipment_weight: 165 };
+      return null;
+    });
+
+    await pushOrder(
+      { get, put: vi.fn().mockResolvedValue({}) } as any,
+      SHOW_COMPONENTS as any,
+      order,
+      (data) => data,
+    );
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body[0].order_details.order_items[0].name).toBe("SMPL72 Family Pack → SMPL72");
+    expect(get).toHaveBeenCalledWith("/products/smpl", { $locale: "en" });
+    fetchMock.mockRestore();
+  });
+
+  it("keeps the bundle as one line when the setting is off", () => {
+    const order = componentOrder(familyPack());
+    const result: any = buildOrder(order, SETTINGS as any, "g");
+
+    expect(result.order_details.order_items).toEqual([
+      expect.objectContaining({
+        name: "SMPL72 Family Pack",
+        quantity: 1,
+        sku: "SMPL72-4V3-4",
+      }),
+    ]);
+  });
+});
+
 describe("customerLocale", () => {
   it("uses account.locale, then the order, then the account display locale", () => {
     expect(customerLocale({ account: { locale: "en, nl" }, display_locale: "de" })).toBe("en");

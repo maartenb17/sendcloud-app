@@ -13,6 +13,7 @@ export interface SendcloudSettings {
   skip_test_orders?: boolean;
   hold_separate_order_schedule?: boolean;
   show_subscription_plan?: boolean;
+  show_bundle_components?: boolean;
   shipping_option_code?: string;
   default_weight?: number;
   create_fulfillment?: boolean;
@@ -245,29 +246,117 @@ export function packingSlipName(item: any): string {
   return plan ? `${base} (${plan})` : base;
 }
 
+// one place to swap the arrow for " – " if the packing-slip pdf cannot draw it
+export const BUNDLE_COMPONENT_SEPARATOR = ' → ';
+
+function bundleComponents(item: any): any[] {
+  if (!Array.isArray(item?.bundle_items)) {
+    return [];
+  }
+  return item.bundle_items.filter((child: any) => child?.product_id);
+}
+
+function componentQuantity(child: any, parent: any): number {
+  const total = Number(child?.quantity_total);
+  if (Number.isFinite(total) && total > 0) {
+    return total;
+  }
+  const each = Number(child?.quantity) || 0;
+  const bundles = Number(parent?.quantity) || 1;
+  return each * bundles;
+}
+
+function componentSlipName(parent: any, child: any): string {
+  const bundle = visibleText(parent?.product?.name || parent?.product_name) || 'Item';
+  const component = visibleText(child?.product?.name || child?.product_name) || 'Item';
+  const base = `${bundle}${BUNDLE_COMPONENT_SEPARATOR}${component}`;
+  const plan = visibleText(parent?.packing_slip_plan);
+  return plan ? `${base} (${plan})` : base;
+}
+
+function componentUnitPrice(child: any): number {
+  const value = Number(child?.price);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function componentTotalPrice(child: any, unit: number, quantity: number): number {
+  if (child?.price_total == null || child?.price_total === '') {
+    return unit * quantity;
+  }
+  const value = Number(child.price_total);
+  return Number.isFinite(value) ? value : unit * quantity;
+}
+
+// line weight is the whole component row. an empty row uses the product weight per unit.
+function componentUnitWeight(child: any, quantity: number): number {
+  const line = Number(child?.shipment_weight);
+  if (Number.isFinite(line) && line > 0 && quantity > 0) {
+    return line / quantity;
+  }
+  const productWeight = Number(child?.product?.shipment_weight);
+  return Number.isFinite(productWeight) && productWeight > 0 ? productWeight : 0;
+}
+
+function expandBundle(item: any): any[] {
+  const children = bundleComponents(item);
+  if (!children.length) {
+    return [item];
+  }
+  const lines = [];
+  for (const child of children) {
+    const quantity = componentQuantity(child, item);
+    if (quantity <= 0) {
+      continue;
+    }
+    const unit = componentUnitPrice(child);
+    lines.push({
+      id: child.id || `${item.id}:${child.product_id}`,
+      product_id: child.product_id,
+      variant_id: child.variant_id || undefined,
+      quantity,
+      product: child.product,
+      variant: child.variant,
+      component_name: componentSlipName(item, child),
+      component_sku: child.product?.sku || child.sku || undefined,
+      component_unit_price: unit,
+      component_total_price: componentTotalPrice(child, unit, quantity),
+      component_unit_weight: componentUnitWeight(child, quantity),
+    });
+  }
+  return lines.length ? lines : [item];
+}
+
 // POST /api/v3/orders payload for one Swell order
 export function buildOrder(order: any, settings: SendcloudSettings, weightUnit: string): object {
   const currency = order.currency;
   const email = order.account?.email;
   const items = shippableItems(order);
+  const slipItems =
+    settings.show_bundle_components === true ? items.flatMap((item: any) => expandBundle(item)) : items;
 
-  const orderItems = items.map((item: any) => {
+  const orderItems = slipItems.map((item: any) => {
     const quantity = item.quantity || 1;
-    const unitWeight = (item.shipment_weight || 0) / quantity;
+    const unitWeight =
+      item.component_unit_weight != null
+        ? item.component_unit_weight
+        : (item.shipment_weight || 0) / quantity;
 
     return {
       item_id: item.id,
       product_id: item.product_id,
       variant_id: item.variant_id || undefined,
-      name: packingSlipName(item).slice(0, 255),
+      name: (item.component_name || packingSlipName(item)).slice(0, 255),
       description: item.variant?.name || item.variant_name || undefined,
       quantity,
-      sku: item.variant?.sku || item.product?.sku || undefined,
+      sku: item.component_sku || item.variant?.sku || item.product?.sku || undefined,
       hs_code: item.product?.hs_code || undefined,
       country_of_origin: item.product?.origin_country || undefined,
       image_url: item.product?.images?.[0]?.file?.url || undefined,
-      unit_price: price(item.price, currency),
-      total_price: price(item.price_total, currency),
+      unit_price: price(item.component_unit_price != null ? item.component_unit_price : item.price, currency),
+      total_price: price(
+        item.component_total_price != null ? item.component_total_price : item.price_total,
+        currency,
+      ),
       ...(unitWeight > 0 && {
         measurement: { weight: { value: roundKg(toKg(unitWeight, weightUnit)), unit: 'kg' } },
       }),
@@ -479,6 +568,56 @@ export async function withLocalizedNames(swell: SwellAPI, order: any): Promise<a
         },
       }),
     });
+  }
+  return { ...order, items };
+}
+
+export async function withBundleComponentProducts(swell: SwellAPI, order: any): Promise<any> {
+  const locale = customerLocale(order);
+  const cache = new Map<string, any>();
+
+  async function load(productId: string): Promise<any> {
+    if (cache.has(productId)) {
+      return cache.get(productId);
+    }
+    try {
+      const product = await swell.get(`/products/${productId}`, locale ? { $locale: locale } : undefined);
+      cache.set(productId, product);
+      return product;
+    } catch (err: any) {
+      console.error(
+        `Sendcloud: could not load bundle component ${productId}${locale ? ` in ${locale}` : ''} - ${err?.message || err}`,
+      );
+      cache.set(productId, null);
+      return null;
+    }
+  }
+
+  const items = [];
+  for (const item of order.items || []) {
+    if (!bundleComponents(item).length) {
+      items.push(item);
+      continue;
+    }
+    const children = [];
+    for (const child of item.bundle_items) {
+      if (!child?.product_id) {
+        children.push(child);
+        continue;
+      }
+      const product = await load(child.product_id);
+      children.push({
+        ...child,
+        product: {
+          ...child.product,
+          ...(product || {}),
+          name: product?.name || child.product?.name,
+          sku: product?.sku || child.product?.sku,
+          shipment_weight: product?.shipment_weight ?? child.product?.shipment_weight,
+        },
+      });
+    }
+    items.push({ ...item, bundle_items: children });
   }
   return { ...order, items };
 }
@@ -743,7 +882,9 @@ export async function pushOrder(
   const localized = await withLocalizedNames(swell, withLocale);
   const named =
     settings.show_subscription_plan === true ? await withSubscriptionPlans(swell, localized) : localized;
-  const created = await upsertOrder(settings, buildOrder(named, settings, weightUnit));
+  const prepared =
+    settings.show_bundle_components === true ? await withBundleComponentProducts(swell, named) : named;
+  const created = await upsertOrder(settings, buildOrder(prepared, settings, weightUnit));
   await swell.put(
     `/orders/${order.id}`,
     values({
