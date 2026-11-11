@@ -135,7 +135,7 @@ export async function post(req: SwellRequest) {
   // a parcel for an order this app did not send still stores tracking, but must not create a second shipment
   const sentByApp = Boolean(appData.sendcloud_order_id);
   if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id && sentByApp) {
-    const shipmentId = await createSwellShipment(swell, order, parcel);
+    const shipmentId = await createSwellShipment(swell, order, parcel, settings);
     if (shipmentId) {
       values.sendcloud_shipment_id = shipmentId;
     }
@@ -158,6 +158,7 @@ async function createSwellShipment(
   swell: SwellAPI,
   order: any,
   parcel: SendcloudParcel,
+  settings: { notify_customer?: boolean },
 ): Promise<string | null> {
   const items = (order.items || [])
     .filter((item: any) => item.delivery === 'shipment' && item.quantity_shipment_deliverable > 0)
@@ -196,6 +197,8 @@ async function createSwellShipment(
     service_name: parcel.shipment?.name,
     tracking_code: parcel.tracking_number,
     notes: `Sendcloud parcel ${parcel.id}${parcel.tracking_url ? `: ${parcel.tracking_url}` : ''}`,
+    // same notification Swell sends when a shipment is created in the dashboard
+    ...(settings.notify_customer !== false && { $notify: 'orders.shipped' }),
   });
 
   console.log(`Sendcloud: created shipment ${shipment.id} for order ${order.number}`);

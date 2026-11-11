@@ -17,6 +17,7 @@ export interface SendcloudSettings {
   shipping_option_code?: string;
   default_weight?: number;
   create_fulfillment?: boolean;
+  notify_customer?: boolean;
   enabled?: boolean;
 }
 

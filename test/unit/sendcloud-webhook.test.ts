@@ -111,6 +111,7 @@ describe("sendcloud-webhook", () => {
         tracking_code: "3SABCD123",
         service: "PostNL Standard",
         service_name: "PostNL Standard",
+        $notify: "orders.shipped",
       }),
     );
     expect(put).toHaveBeenCalledWith("/orders/order_1", {
@@ -127,6 +128,19 @@ describe("sendcloud-webhook", () => {
         },
       },
     });
+  });
+
+  it("does not notify the customer when that setting is off", async () => {
+    const { req, post: postFn } = await setup({
+      settings: { ...SETTINGS, notify_customer: false },
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } }),
+    });
+
+    await post(req);
+
+    const body = postFn.mock.calls[0][1];
+    expect(body.$notify).toBeUndefined();
+    expect(body.tracking_code).toBe("3SABCD123");
   });
 
   it("stores tracking without a shipment when the order was not sent by this app", async () => {
