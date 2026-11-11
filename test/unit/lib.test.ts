@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   buildOrder,
+  chooseInvoice,
   getSignatureKey,
+  hasSeparateOrderSchedule,
   isTestOrder,
   splitAddress,
   toPythonJson,
@@ -82,6 +84,56 @@ describe("isTestOrder", () => {
     expect(isTestOrder({ metadata: { test: true } })).toBe(true);
     expect(isTestOrder({ test: false, metadata: { test: "true" } })).toBe(false);
     expect(isTestOrder({})).toBe(false);
+  });
+});
+
+describe("hasSeparateOrderSchedule", () => {
+  it("is true only when order_schedule is set and differs from billing", () => {
+    expect(
+      hasSeparateOrderSchedule({
+        billing_schedule: { interval: "monthly", interval_count: 1 },
+        order_schedule: { interval: "monthly", interval_count: 3 },
+      }),
+    ).toBe(true);
+    expect(
+      hasSeparateOrderSchedule({
+        billing_schedule: { interval: "yearly", interval_count: 1 },
+        order_schedule: null,
+      }),
+    ).toBe(false);
+    expect(
+      hasSeparateOrderSchedule({
+        billing_schedule: { interval: "monthly", interval_count: 3 },
+      }),
+    ).toBe(false);
+    expect(
+      hasSeparateOrderSchedule({
+        billing_schedule: { interval: "monthly" },
+        order_schedule: { interval: "monthly" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("chooseInvoice", () => {
+  const order = { id: "order_2", date_created: "2026-11-06T10:00:00.000Z" };
+  const earlier = { id: "order_1", date_created: "2026-08-06T10:00:00.000Z" };
+
+  it("picks the invoice a second before the order", () => {
+    const invoice = { id: "inv_1", status: "paid", date_created: "2026-11-06T09:59:59.000Z" };
+    expect(chooseInvoice(order, [invoice], [earlier, order])?.id).toBe("inv_1");
+  });
+
+  it("ignores an invoice outside 26 hours", () => {
+    const invoice = { id: "inv_old", status: "paid", date_created: "2026-10-06T10:00:00.000Z" };
+    expect(chooseInvoice(order, [invoice], [earlier, order])).toBeNull();
+  });
+
+  it("does not claim an invoice that is closer to an earlier order", () => {
+    const invoice = { id: "inv_1", status: "pending", date_created: "2026-11-06T09:00:00.000Z" };
+    const neighbor = { id: "order_9", date_created: "2026-11-06T09:00:00.000Z" };
+    expect(chooseInvoice(order, [invoice], [order, neighbor])).toBeNull();
+    expect(chooseInvoice(neighbor, [invoice], [order, neighbor])?.id).toBe("inv_1");
   });
 });
 

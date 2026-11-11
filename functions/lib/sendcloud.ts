@@ -11,6 +11,7 @@ export interface SendcloudSettings {
   webhook_signature_key?: string;
   sync_on?: 'paid' | 'submitted';
   skip_test_orders?: boolean;
+  hold_separate_order_schedule?: boolean;
   shipping_option_code?: string;
   default_weight?: number;
   create_fulfillment?: boolean;
@@ -306,6 +307,172 @@ export function getAppData(record: any, appId: string): Record<string, any> {
   return record?.$app?.[appId] || record?.$app?.sendcloud || {};
 }
 
+// --- when to send -----------------------------------------------------------
+
+export const WAITING_FOR_INVOICE = 'Waiting for invoice payment';
+// invoice and order can be this far apart and still belong together (step 0d)
+export const INVOICE_WINDOW_MS = 26 * 60 * 60 * 1000;
+export const ORDER_EXPAND = ['account', 'items.product', 'items.variant'];
+
 export function isTestOrder(order: any): boolean {
   return order?.test === true || order?.metadata?.test === true;
+}
+
+// true when the subscription ships on a different cadence than it bills.
+// an empty order_schedule means orders follow the billing schedule.
+export function hasSeparateOrderSchedule(subscription: any): boolean {
+  const order = subscription?.order_schedule;
+  const billing = subscription?.billing_schedule;
+  if (!order?.interval) {
+    return false;
+  }
+  return (
+    order.interval !== billing?.interval ||
+    (order.interval_count ?? 1) !== (billing?.interval_count ?? 1)
+  );
+}
+
+function time(value: unknown): number {
+  const parsed = new Date(value as string).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+// the order in the list closest to this invoice, but only inside the 26-hour window.
+// an exact tie goes to the earlier order, so one invoice is never claimed twice.
+export function orderClosestToInvoice(invoice: any, orders: any[]): any | null {
+  const at = time(invoice?.date_created);
+  if (!Number.isFinite(at)) {
+    return null;
+  }
+  let best: any = null;
+  let bestDistance = Infinity;
+  for (const order of orders) {
+    const distance = Math.abs(time(order?.date_created) - at);
+    if (!Number.isFinite(distance) || distance > INVOICE_WINDOW_MS) {
+      continue;
+    }
+    const earlier = best && String(order.date_created) < String(best.date_created);
+    if (distance < bestDistance || (distance === bestDistance && earlier)) {
+      best = order;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+// the invoice this order may claim: nearest one inside 26 hours for which this
+// order is the closest order. Invoices outside the window, or closer to another
+// order, are not returned.
+export function chooseInvoice(order: any, invoices: any[], orders: any[]): any | null {
+  const at = time(order?.date_created);
+  if (!Number.isFinite(at)) {
+    return null;
+  }
+  let best: any = null;
+  let bestDistance = Infinity;
+  for (const invoice of invoices) {
+    if (!invoice?.id) {
+      continue;
+    }
+    const distance = Math.abs(time(invoice.date_created) - at);
+    if (!Number.isFinite(distance) || distance > INVOICE_WINDOW_MS) {
+      continue;
+    }
+    if (orderClosestToInvoice(invoice, orders)?.id !== order.id) {
+      continue;
+    }
+    if (distance < bestDistance) {
+      best = invoice;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+async function listAround(
+  swell: SwellAPI,
+  path: '/orders' | '/invoices',
+  subscriptionId: string,
+  center: number,
+  windowMs: number,
+): Promise<any[]> {
+  const found = await swell.get(path, {
+    where: {
+      subscription_id: subscriptionId,
+      date_created: {
+        $gte: new Date(center - windowMs).toISOString(),
+        $lte: new Date(center + windowMs).toISOString(),
+      },
+    },
+    limit: 50,
+    ...(path === '/orders' && { expand: ORDER_EXPAND }),
+  });
+  return found?.results || [];
+}
+
+export interface InvoiceDecision {
+  applies: boolean;
+  invoice: { id: string; status?: string } | null;
+}
+
+// applies only to a later order of a subscription that ships on its own schedule.
+// the returned invoice is unset when none can be claimed, including when another
+// order already holds that invoice id.
+export async function renewalInvoice(swell: SwellAPI, appId: string, order: any): Promise<InvoiceDecision> {
+  if (!order?.subscription_id || !order?.date_created) {
+    return { applies: false, invoice: null };
+  }
+  const subscription = await swell.get(`/subscriptions/${order.subscription_id}`);
+  if (!hasSeparateOrderSchedule(subscription)) {
+    return { applies: false, invoice: null };
+  }
+  const earliest = await swell.get('/orders', {
+    where: { subscription_id: order.subscription_id },
+    sort: 'date_created asc',
+    limit: 1,
+  });
+  const first = earliest?.results?.[0];
+  if (!first || first.id === order.id) {
+    return { applies: false, invoice: null };
+  }
+
+  const center = time(order.date_created);
+  const [invoices, siblings] = await Promise.all([
+    listAround(swell, '/invoices', order.subscription_id, center, INVOICE_WINDOW_MS),
+    listAround(swell, '/orders', order.subscription_id, center, INVOICE_WINDOW_MS * 2),
+  ]);
+  const orders = siblings.some((entry) => entry.id === order.id) ? siblings : [...siblings, order];
+  const invoice = chooseInvoice(order, invoices, orders);
+  if (!invoice) {
+    return { applies: true, invoice: null };
+  }
+  const holders = await swell.get('/orders', {
+    where: { [`$app.${appId}.sendcloud_invoice_id`]: invoice.id },
+    limit: 5,
+  });
+  if ((holders?.results || []).some((entry: any) => entry.id !== order.id)) {
+    return { applies: true, invoice: null };
+  }
+  return { applies: true, invoice: { id: invoice.id, status: invoice.status } };
+}
+
+export async function pushOrder(
+  swell: SwellAPI,
+  settings: SendcloudSettings,
+  order: any,
+  values: (data: Record<string, any>) => any,
+  extra: Record<string, any> = {},
+): Promise<{ id?: number }> {
+  const weightUnit = await getWeightUnit(swell);
+  const created = await upsertOrder(settings, buildOrder(order, settings, weightUnit));
+  await swell.put(
+    `/orders/${order.id}`,
+    values({
+      sendcloud_order_id: created?.id,
+      sendcloud_status: 'Sent to Sendcloud',
+      sendcloud_error: null,
+      ...extra,
+    }),
+  );
+  return created;
 }
