@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildOrder,
   chooseInvoice,
+  customerLocale,
   getSignatureKey,
   hasSeparateOrderSchedule,
   isTestOrder,
@@ -112,6 +113,15 @@ describe("hasSeparateOrderSchedule", () => {
         order_schedule: { interval: "monthly" },
       }),
     ).toBe(false);
+  });
+});
+
+describe("customerLocale", () => {
+  it("uses account.locale, then the order, then the account display locale", () => {
+    expect(customerLocale({ account: { locale: "en, nl" }, display_locale: "de" })).toBe("en");
+    expect(customerLocale({ display_locale: "de", account: { display_locale: "fr" } })).toBe("de");
+    expect(customerLocale({ account: { display_locale: "fr" } })).toBe("fr");
+    expect(customerLocale({ account: {} })).toBeUndefined();
   });
 });
 
