@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildOrder,
   getSignatureKey,
+  isTestOrder,
   splitAddress,
   toPythonJson,
   verifySignature,
@@ -72,6 +73,15 @@ describe("buildOrder", () => {
       type: "shipping_option_code",
       properties: { shipping_option_code: "postnl:standard" },
     });
+  });
+});
+
+describe("isTestOrder", () => {
+  it("accepts only a boolean true on the order or its metadata", () => {
+    expect(isTestOrder({ test: true })).toBe(true);
+    expect(isTestOrder({ metadata: { test: true } })).toBe(true);
+    expect(isTestOrder({ test: false, metadata: { test: "true" } })).toBe(false);
+    expect(isTestOrder({})).toBe(false);
   });
 });
 
