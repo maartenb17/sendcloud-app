@@ -2,6 +2,7 @@ import {
   ORDER_EXPAND,
   SendcloudError,
   WAITING_FOR_INVOICE,
+  WAITING_FOR_OVERDUE,
   getAppData,
   getSendcloudSettings,
   hasCredentials,
@@ -24,7 +25,6 @@ export const BUDGET_MS = 8_000;
 export const TIME_LIMIT_REASON = 'the time limit for one run was reached; run it again to send the rest';
 
 const RECORD_ID = /^[0-9a-f]{24}$/i;
-const MANUAL_NOTE = 'Sent to Sendcloud manually while waiting for invoice payment.';
 
 export default function (req: SwellRequest) {
   return runAction('Send to Sendcloud', () => send(req));
@@ -128,12 +128,18 @@ async function sendOne(req: SwellRequest, settings: Awaited<ReturnType<typeof ge
   }
 
   const notes: string[] = [];
-  if (appData.sendcloud_status === WAITING_FOR_INVOICE) {
-    console.log(`Sendcloud: order ${order.number} sent manually while waiting for invoice payment`);
-    notes.push('sent manually while waiting for invoice payment');
+  const manualWait =
+    appData.sendcloud_status === WAITING_FOR_INVOICE
+      ? 'invoice payment'
+      : appData.sendcloud_status === WAITING_FOR_OVERDUE
+        ? 'overdue payments'
+        : null;
+  if (manualWait) {
+    console.log(`Sendcloud: order ${order.number} sent manually while waiting for ${manualWait}`);
+    notes.push(`sent manually while waiting for ${manualWait}`);
     try {
       await req.swell.post('/notes', {
-        body: MANUAL_NOTE,
+        body: `Sent to Sendcloud manually while waiting for ${manualWait}.`,
         collection: 'orders',
         record_id: order.id,
       });

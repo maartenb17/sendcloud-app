@@ -478,6 +478,184 @@ describe("order-events", () => {
     expect(put).not.toHaveBeenCalled();
     expect(logs).toContain("Sendcloud: order 100996 is canceled, skipping");
   });
+
+  it("holds a paid shipment while the subscription is past due", async () => {
+    const order = renewalOrder();
+    const { req, put } = setup({
+      settings: { ...SETTINGS, hold_separate_order_schedule: true },
+      order,
+    });
+    req.swell.get = renewalGet(order, {
+      subscription: { ...SEPARATE, status: "pastdue" },
+      invoices: [
+        { id: "inv_old", status: "unpaid", date_created: "2026-08-06T10:00:00.000Z" },
+        { id: "inv_1", status: "paid", date_created: "2026-11-06T10:29:50.000Z" },
+      ],
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_status: "Waiting for overdue payments",
+          sendcloud_invoice_id: "inv_1",
+          sendcloud_error: null,
+        },
+      },
+    });
+  });
+
+  it("sends waiting shipments when an older invoice is paid and the subscription is active", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 672 }] }));
+    const order = renewalOrder({
+      $app: { sendcloud: { sendcloud_status: "Waiting for overdue payments", sendcloud_invoice_id: "inv_new" } },
+    });
+    const invoices = [
+      { id: "inv_old", status: "paid", subscription_id: "sub_1", date_created: "2026-08-06T10:00:00.000Z" },
+      { id: "inv_new", status: "paid", subscription_id: "sub_1", date_created: order.date_created },
+    ];
+    const put = vi.fn().mockResolvedValue({});
+    const req = createMockRequest({
+      data: { id: "inv_old", $event: { type: "invoice.payment_succeeded" } } as any,
+      appId: "sendcloud",
+      swell: {
+        settings: vi.fn().mockResolvedValue({ sendcloud: { ...SETTINGS, hold_separate_order_schedule: true } }),
+        get: vi.fn(async (url: string) => {
+          if (url === "/invoices/inv_old") return invoices[0];
+          if (url === "/subscriptions/sub_1") return { ...SEPARATE, status: "active" };
+          if (url === "/invoices") return { results: invoices };
+          if (url === "/orders") return { results: [order] };
+          if (url === "/settings/shipments") return { weight_unit: "kg" };
+          return null;
+        }),
+        put,
+      },
+    });
+
+    await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith(
+      "/orders/order_1",
+      expect.objectContaining({
+        $app: { sendcloud: expect.objectContaining({ sendcloud_order_id: 672, sendcloud_invoice_id: "inv_new" }) },
+      }),
+    );
+  });
+
+  it("sends waiting shipments when the subscription update clears the arrears", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 673 }] }));
+    const order = renewalOrder({
+      $app: { sendcloud: { sendcloud_status: "Waiting for overdue payments", sendcloud_invoice_id: "inv_new" } },
+    });
+    const put = vi.fn().mockResolvedValue({});
+    const req = createMockRequest({
+      data: { id: "sub_1", $event: { type: "subscription.updated" } } as any,
+      appId: "sendcloud",
+      swell: {
+        settings: vi.fn().mockResolvedValue({ sendcloud: { ...SETTINGS, hold_separate_order_schedule: true } }),
+        get: vi.fn(async (url: string) => {
+          if (url === "/subscriptions/sub_1") return { ...SEPARATE, status: "active" };
+          if (url === "/invoices") {
+            return {
+              results: [
+                { id: "inv_old", status: "paid", date_created: "2026-08-06T10:00:00.000Z" },
+                { id: "inv_new", status: "paid", date_created: order.date_created },
+              ],
+            };
+          }
+          if (url === "/orders") return { results: [order] };
+          if (url === "/settings/shipments") return { weight_unit: "kg" };
+          return null;
+        }),
+        put,
+      },
+    });
+
+    await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith(
+      "/orders/order_1",
+      expect.objectContaining({
+        $app: { sendcloud: expect.objectContaining({ sendcloud_order_id: 673, sendcloud_invoice_id: "inv_new" }) },
+      }),
+    );
+  });
+
+  it("sends the shipment when the only earlier invoice is void", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 674 }] }));
+    const order = renewalOrder();
+    const { req, put } = setup({
+      settings: { ...SETTINGS, hold_separate_order_schedule: true },
+      order,
+    });
+    req.swell.get = renewalGet(order, {
+      subscription: { ...SEPARATE, status: "active" },
+      invoices: [
+        { id: "inv_old", status: "void", void: true, paid: true, date_created: "2026-08-06T10:00:00.000Z" },
+        { id: "inv_1", status: "paid", date_created: "2026-11-06T10:29:50.000Z" },
+      ],
+    });
+
+    await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(put).toHaveBeenCalledWith(
+      "/orders/order_1",
+      expect.objectContaining({
+        $app: { sendcloud: expect.objectContaining({ sendcloud_order_id: 674, sendcloud_invoice_id: "inv_1" }) },
+      }),
+    );
+  });
+
+  it("does not send a shipment when the subscription is canceled", async () => {
+    const paid = renewalOrder();
+    const { req, put } = setup({
+      settings: { ...SETTINGS, hold_separate_order_schedule: true },
+      order: paid,
+    });
+    req.swell.get = renewalGet(paid, {
+      subscription: { ...SEPARATE, status: "canceled", canceled: true },
+      invoices: [{ id: "inv_1", status: "paid", date_created: paid.date_created }],
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100996 subscription is canceled, skipping");
+
+    fetchMock.mockClear();
+    logs.length = 0;
+    const waiting = renewalOrder({
+      $app: { sendcloud: { sendcloud_status: "Waiting for overdue payments", sendcloud_invoice_id: "inv_new" } },
+    });
+    const updated = createMockRequest({
+      data: { id: "sub_1", $event: { type: "subscription.updated" } } as any,
+      appId: "sendcloud",
+      swell: {
+        settings: vi.fn().mockResolvedValue({ sendcloud: { ...SETTINGS, hold_separate_order_schedule: true } }),
+        get: vi.fn(async (url: string) => {
+          if (url === "/subscriptions/sub_1") return { ...SEPARATE, status: "canceled", canceled: true };
+          if (url === "/invoices") {
+            return { results: [{ id: "inv_new", status: "paid", date_created: waiting.date_created }] };
+          }
+          if (url === "/orders") return { results: [waiting] };
+          return null;
+        }),
+        put: vi.fn().mockResolvedValue({}),
+      },
+    });
+
+    await handler(updated);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(updated.swell.put).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100996 subscription is canceled, skipping");
+  });
 });
 
 const SEPARATE = {

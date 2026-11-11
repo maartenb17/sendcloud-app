@@ -67,7 +67,7 @@
       "label": "Hold orders from a separate order schedule until their invoice is paid",
       "type": "boolean",
       "ui": "toggle",
-      "description": "For an order of a subscription that ships on its own schedule (order_schedule differs from billing_schedule), wait until that shipment's invoice has status paid. The order that created the subscription is sent on the paid or submitted event. A plan with no order_schedule, including a yearly plan, is not held.",
+      "description": "For an order of a subscription that ships on its own schedule (order_schedule differs from billing_schedule), wait until that shipment's invoice has status paid, and until the subscription is clear of arrears. Arrears means status pastdue or unpaid, or an earlier invoice with status pending or unpaid. A void invoice is ignored. The order then stays at Waiting for overdue payments. The order that created the subscription is sent on the paid or submitted event. A plan with no order_schedule, including a yearly plan, is not held. Send to Sendcloud can send while waiting and notes that on the order.",
       "default": false
     },
     {

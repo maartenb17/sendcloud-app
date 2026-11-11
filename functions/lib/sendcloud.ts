@@ -326,6 +326,9 @@ export function getAppData(record: any, appId: string): Record<string, any> {
 // --- when to send -----------------------------------------------------------
 
 export const WAITING_FOR_INVOICE = 'Waiting for invoice payment';
+export const WAITING_FOR_OVERDUE = 'Waiting for overdue payments';
+
+const ARREARS_INVOICE_STATUSES = new Set(['pending', 'unpaid']);
 // invoice and order can be this far apart and still belong together (step 0d)
 export const INVOICE_WINDOW_MS = 26 * 60 * 60 * 1000;
 export const ORDER_EXPAND = ['account', 'items.product', 'items.variant'];
@@ -337,6 +340,36 @@ export function isTestOrder(order: any): boolean {
 // live orders set both; either one is enough
 export function isCanceledOrder(order: any): boolean {
   return order?.status === 'canceled' || order?.canceled === true;
+}
+
+export function isSubscriptionCanceled(subscription: any): boolean {
+  return subscription?.status === 'canceled' || subscription?.canceled === true;
+}
+
+// Swell's past-due status is "pastdue". "unpaid" is the closed-arrears status.
+export function subscriptionInArrears(subscription: any): boolean {
+  return subscription?.status === 'pastdue' || subscription?.status === 'unpaid';
+}
+
+// an earlier pending or unpaid invoice blocks the shipment. void does not.
+export function earlierInvoiceInArrears(ownInvoice: any, invoices: any[]): boolean {
+  const ownTime = time(ownInvoice?.date_created);
+  if (!Number.isFinite(ownTime)) {
+    return false;
+  }
+  return (invoices || []).some((invoice) => {
+    if (!invoice?.id || invoice.id === ownInvoice.id) {
+      return false;
+    }
+    if (invoice.void === true || invoice.status === 'void') {
+      return false;
+    }
+    if (!ARREARS_INVOICE_STATUSES.has(invoice.status)) {
+      return false;
+    }
+    const created = time(invoice.date_created);
+    return Number.isFinite(created) && created < ownTime;
+  });
 }
 
 // true when the subscription ships on a different cadence than it bills.
@@ -640,6 +673,7 @@ async function listAround(
 export interface InvoiceDecision {
   applies: boolean;
   invoice: { id: string; status?: string } | null;
+  block?: 'canceled' | 'overdue' | null;
 }
 
 // applies to every order of a subscription that ships on its own schedule,
@@ -657,6 +691,9 @@ export async function renewalInvoice(swell: SwellAPI, appId: string, order: any)
   }
   if (subscription?.order_id && subscription.order_id === order.id) {
     return { applies: false, invoice: null };
+  }
+  if (isSubscriptionCanceled(subscription)) {
+    return { applies: true, invoice: null, block: 'canceled' };
   }
 
   const center = time(order.date_created);
@@ -676,7 +713,21 @@ export async function renewalInvoice(swell: SwellAPI, appId: string, order: any)
   if ((holders?.results || []).some((entry: any) => entry.id !== order.id)) {
     return { applies: true, invoice: null };
   }
-  return { applies: true, invoice: { id: invoice.id, status: invoice.status } };
+  if (invoice.status !== 'paid') {
+    return { applies: true, invoice: { id: invoice.id, status: invoice.status } };
+  }
+  const history = await swell.get('/invoices', {
+    where: { subscription_id: order.subscription_id },
+    sort: 'date_created asc',
+    limit: 100,
+  });
+  const overdue =
+    subscriptionInArrears(subscription) || earlierInvoiceInArrears(invoice, history?.results || []);
+  return {
+    applies: true,
+    invoice: { id: invoice.id, status: invoice.status },
+    block: overdue ? 'overdue' : null,
+  };
 }
 
 export async function pushOrder(

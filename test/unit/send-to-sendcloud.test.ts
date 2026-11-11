@@ -92,6 +92,25 @@ describe("send-to-sendcloud", () => {
     expect(result?.message).toContain("sent manually while waiting for invoice payment");
   });
 
+  it("sends an order that is waiting for overdue payments, and notes that it was manual", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 703 }] }));
+    const waiting = order({
+      $app: { sendcloud: { sendcloud_status: "Waiting for overdue payments", sendcloud_invoice_id: "inv_1" } },
+    });
+    const { req, post } = actionRequest([waiting]);
+
+    const result = await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(logs).toContain("Sendcloud: order 100003 sent manually while waiting for overdue payments");
+    expect(post).toHaveBeenCalledWith("/notes", {
+      body: "Sent to Sendcloud manually while waiting for overdue payments.",
+      collection: "orders",
+      record_id: ORDER_ID,
+    });
+    expect(result?.message).toContain("sent manually while waiting for overdue payments");
+  });
+
   it("sends a test order and logs that the send was manual", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 701 }] }));
     const { req } = actionRequest([order({ test: true })]);

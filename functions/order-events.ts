@@ -3,17 +3,21 @@ import {
   ORDER_EXPAND,
   SendcloudError,
   WAITING_FOR_INVOICE,
+  WAITING_FOR_OVERDUE,
   deleteOrder,
+  earlierInvoiceInArrears,
   getAppData,
   getSendcloudSettings,
   hasCredentials,
   hasSeparateOrderSchedule,
   isCanceledOrder,
+  isSubscriptionCanceled,
   isTestOrder,
   orderClosestToInvoice,
   pushOrder,
   renewalInvoice,
   shippableItems,
+  subscriptionInArrears,
 } from './lib/sendcloud';
 
 export const config: SwellConfig = {
@@ -26,12 +30,16 @@ export const config: SwellConfig = {
       'invoice.created',
       'invoice.payment_succeeded',
       'subscription.invoiced',
+      'subscription.updated',
     ],
   },
 };
 
 export default async function (req: SwellRequest) {
   const eventType = req.data.$event?.type;
+  if (eventType === 'subscription.updated') {
+    return handleSubscription(req);
+  }
   if (
     eventType === 'invoice.created' ||
     eventType === 'invoice.payment_succeeded' ||
@@ -107,6 +115,10 @@ async function handleOrder(req: SwellRequest) {
   let invoiceId: string | undefined;
   if (settings.hold_separate_order_schedule === true) {
     const decision = await renewalInvoice(swell, appId || 'sendcloud', order);
+    if (decision.block === 'canceled') {
+      console.log(`Sendcloud: order ${order.number} subscription is canceled, skipping`);
+      return;
+    }
     if (decision.applies && decision.invoice?.status !== 'paid') {
       await swell.put(
         `/orders/${orderId}`,
@@ -117,6 +129,18 @@ async function handleOrder(req: SwellRequest) {
         }),
       );
       console.log(`Sendcloud: order ${order.number} is waiting for invoice payment`);
+      return;
+    }
+    if (decision.block === 'overdue') {
+      await swell.put(
+        `/orders/${orderId}`,
+        req.appValues({
+          sendcloud_status: WAITING_FOR_OVERDUE,
+          ...(decision.invoice?.id && { sendcloud_invoice_id: decision.invoice.id }),
+          sendcloud_error: null,
+        }),
+      );
+      console.log(`Sendcloud: order ${order.number} is waiting for overdue payments`);
       return;
     }
     invoiceId = decision.invoice?.id;
@@ -152,6 +176,13 @@ async function handleInvoice(req: SwellRequest) {
   const invoice = await loadInvoice(swell, data);
   if (!invoice?.id || !invoice.subscription_id) {
     return;
+  }
+  if (invoice.status === 'paid') {
+    const subscription = await swell.get(`/subscriptions/${invoice.subscription_id}`);
+    if (hasSeparateOrderSchedule(subscription)) {
+      await releaseHeldOrders(req, settings, subscription, invoice.subscription_id);
+      return;
+    }
   }
 
   const resolvedAppId = appId || 'sendcloud';
@@ -200,6 +231,110 @@ async function handleInvoice(req: SwellRequest) {
   try {
     const created = await pushOrder(swell, settings, order, (values) => req.appValues(values), {
       sendcloud_invoice_id: invoice.id,
+    });
+    console.log(`Sendcloud: sent order ${order.number} as Sendcloud order ${created?.id}`);
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    console.error(`Sendcloud: failed to send order ${order.number} - ${message}`);
+    await swell.put(`/orders/${order.id}`, req.appValues({ sendcloud_error: message }));
+    if (err instanceof SendcloudError && err.status < 500) {
+      return;
+    }
+    throw err;
+  }
+}
+
+async function handleSubscription(req: SwellRequest) {
+  const { swell, data } = req;
+  const settings = await getSendcloudSettings(swell);
+  if (settings.hold_separate_order_schedule !== true || settings.enabled === false) {
+    return;
+  }
+  if (!hasCredentials(settings)) {
+    console.error('Sendcloud: missing required settings (public_key, secret_key, integration_id)');
+    return;
+  }
+  if (!data?.id) {
+    return;
+  }
+  const subscription = await swell.get(`/subscriptions/${data.id}`);
+  await releaseHeldOrders(req, settings, subscription, data.id);
+}
+
+async function releaseHeldOrders(req: SwellRequest, settings: Awaited<ReturnType<typeof getSendcloudSettings>>, subscription: any, subscriptionId: string) {
+  if (!hasSeparateOrderSchedule(subscription)) {
+    return;
+  }
+  const { swell } = req;
+  const [invoiceList, orderList] = await Promise.all([
+    swell.get('/invoices', {
+      where: { subscription_id: subscriptionId },
+      sort: 'date_created asc',
+      limit: 100,
+    }),
+    swell.get('/orders', {
+      where: { subscription_id: subscriptionId },
+      limit: 100,
+      expand: ORDER_EXPAND,
+    }),
+  ]);
+  const invoices = invoiceList?.results || [];
+  for (const order of orderList?.results || []) {
+    const appData = getAppData(order, req.appId || 'sendcloud');
+    if (appData.sendcloud_order_id) {
+      continue;
+    }
+    if (appData.sendcloud_status !== WAITING_FOR_INVOICE && appData.sendcloud_status !== WAITING_FOR_OVERDUE) {
+      continue;
+    }
+    await settleHeldOrder(req, settings, subscription, invoices, order);
+  }
+}
+
+async function settleHeldOrder(req: SwellRequest, settings: Awaited<ReturnType<typeof getSendcloudSettings>>, subscription: any, invoices: any[], order: any) {
+  const { swell } = req;
+  const appData = getAppData(order, req.appId || 'sendcloud');
+  if (subscription?.order_id && subscription.order_id === order.id) {
+    return;
+  }
+  if (settings.skip_test_orders === true && isTestOrder(order)) {
+    console.log(`Sendcloud: order ${order.number} is a test order, skipping`);
+    return;
+  }
+  if (isCanceledOrder(order)) {
+    console.log(`Sendcloud: order ${order.number} is canceled, skipping`);
+    return;
+  }
+  if (isSubscriptionCanceled(subscription)) {
+    console.log(`Sendcloud: order ${order.number} subscription is canceled, skipping`);
+    return;
+  }
+
+  const own = invoices.find((invoice) => invoice.id === appData.sendcloud_invoice_id);
+  if (!own || own.status !== 'paid') {
+    return;
+  }
+  if (subscriptionInArrears(subscription) || earlierInvoiceInArrears(own, invoices)) {
+    if (appData.sendcloud_status !== WAITING_FOR_OVERDUE) {
+      await swell.put(
+        `/orders/${order.id}`,
+        req.appValues({
+          sendcloud_status: WAITING_FOR_OVERDUE,
+          sendcloud_invoice_id: own.id,
+          sendcloud_error: null,
+        }),
+      );
+    }
+    console.log(`Sendcloud: order ${order.number} is waiting for overdue payments`);
+    return;
+  }
+  if (!shippableItems(order).length || !order.shipping?.address1 || !order.shipping?.country) {
+    return;
+  }
+
+  try {
+    const created = await pushOrder(swell, settings, order, (values) => req.appValues(values), {
+      sendcloud_invoice_id: own.id,
     });
     console.log(`Sendcloud: sent order ${order.number} as Sendcloud order ${created?.id}`);
   } catch (err: any) {
