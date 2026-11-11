@@ -198,6 +198,31 @@ describe("order-events", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("sends product and variant names in the customer's locale", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 1 }] }));
+    const order = makeOrder({
+      account: { email: "jan@example.com", locale: "en" },
+    });
+    const item = order.items[0] as Record<string, any>;
+    item.variant_id = "var_1";
+    item.variant = { name: "Rood" };
+    item.product = { name: "Mok", sku: "MUG" };
+    const get = vi.fn(async (url: string) => {
+      if (url === "/orders/order_1") return order;
+      if (url === "/settings/shipments") return { weight_unit: "kg" };
+      if (url === "/products/prod_1") return { name: "Mug", variants: [{ id: "var_1", name: "Red" }] };
+      return null;
+    });
+    const { req } = setup({ order });
+    req.swell.get = get;
+
+    await handler(req);
+
+    expect(get).toHaveBeenCalledWith("/products/prod_1", { $locale: "en", expand: ["variants"] });
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body[0].order_details.order_items[0]).toMatchObject({ name: "Mug", description: "Red" });
+  });
+
   it("holds a renewal on a separate schedule until its invoice is paid", async () => {
     const order = renewalOrder();
     const { req, put } = setup({

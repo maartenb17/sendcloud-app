@@ -332,6 +332,68 @@ export function hasSeparateOrderSchedule(subscription: any): boolean {
   );
 }
 
+// account.locale, then the order's display locale, then the account's.
+// one code: "en,nl" is the same as "en". No code means the store language.
+export function customerLocale(order: any): string | undefined {
+  const candidates = [order?.account?.locale, order?.display_locale, order?.account?.display_locale];
+  for (const value of candidates) {
+    if (typeof value !== 'string') {
+      continue;
+    }
+    const code = value.split(',')[0]?.trim();
+    if (code) {
+      return code;
+    }
+  }
+  return undefined;
+}
+
+export async function withLocalizedNames(swell: SwellAPI, order: any): Promise<any> {
+  const locale = customerLocale(order);
+  if (!locale) {
+    return order;
+  }
+
+  const products = new Map<string, any>();
+  const items = [];
+  for (const item of order.items || []) {
+    if (!item?.product_id) {
+      items.push(item);
+      continue;
+    }
+    if (!products.has(item.product_id)) {
+      try {
+        products.set(
+          item.product_id,
+          await swell.get(`/products/${item.product_id}`, { $locale: locale, expand: ['variants'] }),
+        );
+      } catch (err: any) {
+        console.error(`Sendcloud: could not load product ${item.product_id} in ${locale} - ${err?.message || err}`);
+        products.set(item.product_id, null);
+      }
+    }
+    const product = products.get(item.product_id);
+    const variants = product?.variants?.results || product?.variants || [];
+    const variant = variants.find((entry: any) => entry?.id === item.variant_id);
+    items.push({
+      ...item,
+      product: {
+        ...item.product,
+        ...(product || {}),
+        name: product?.name || item.product?.name,
+      },
+      ...(item.variant_id && {
+        variant: {
+          ...item.variant,
+          ...(variant || {}),
+          name: variant?.name || item.variant?.name,
+        },
+      }),
+    });
+  }
+  return { ...order, items };
+}
+
 function time(value: unknown): number {
   const parsed = new Date(value as string).getTime();
   return Number.isFinite(parsed) ? parsed : NaN;
@@ -464,7 +526,8 @@ export async function pushOrder(
   extra: Record<string, any> = {},
 ): Promise<{ id?: number }> {
   const weightUnit = await getWeightUnit(swell);
-  const created = await upsertOrder(settings, buildOrder(order, settings, weightUnit));
+  const localized = await withLocalizedNames(swell, order);
+  const created = await upsertOrder(settings, buildOrder(localized, settings, weightUnit));
   await swell.put(
     `/orders/${order.id}`,
     values({
