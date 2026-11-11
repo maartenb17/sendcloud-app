@@ -115,6 +115,33 @@ describe("send-to-sendcloud", () => {
     expect(result?.message).toContain("Updated 1 order in Sendcloud");
   });
 
+  it("skips an unpaid order and a canceled order", async () => {
+    const unpaid = order({ id: "b".repeat(24), number: "100010", paid: false });
+    const canceled = order({ id: "c".repeat(24), number: "100011", status: "canceled", paid: true });
+    const { req } = actionRequest([unpaid, canceled], "bulk");
+
+    await expect(handler(req)).rejects.toThrow(
+      "Skipped: 100010: order is not paid · 100011: order is canceled.",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100011 is canceled, skipping");
+  });
+
+  it("still sends a paid renewal whose total is zero", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 702 }] }));
+    const renewal = order({
+      grand_total: 0,
+      paid: true,
+      $app: { sendcloud: { sendcloud_status: "Waiting for invoice payment" } },
+    });
+    const { req } = actionRequest([renewal]);
+
+    const result = await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result?.message).toContain("Sent 1 order to Sendcloud");
+  });
+
   it("skips an order that already has a label", async () => {
     const labeled = order({ $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_parcel_id: 5001 } } });
     const { req } = actionRequest([labeled]);

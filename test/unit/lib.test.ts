@@ -5,6 +5,7 @@ import {
   customerLocale,
   getSignatureKey,
   hasSeparateOrderSchedule,
+  isCanceledOrder,
   isTestOrder,
   splitAddress,
   toPythonJson,
@@ -85,6 +86,14 @@ describe("isTestOrder", () => {
     expect(isTestOrder({ metadata: { test: true } })).toBe(true);
     expect(isTestOrder({ test: false, metadata: { test: "true" } })).toBe(false);
     expect(isTestOrder({})).toBe(false);
+  });
+});
+
+describe("isCanceledOrder", () => {
+  it("matches status canceled or the canceled flag", () => {
+    expect(isCanceledOrder({ status: "canceled" })).toBe(true);
+    expect(isCanceledOrder({ canceled: true })).toBe(true);
+    expect(isCanceledOrder({ status: "delivery_pending", canceled: false, paid: true })).toBe(false);
   });
 });
 
