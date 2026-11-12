@@ -3,7 +3,7 @@
 	"id": "smpl_sendcloud",
 	"name": "Sendcloud (SMPL)",
 	"type": "integration",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"support_email": "support@swell.is",
 	"documentation_url": "https://developers.swell.is/app-guides/sendcloud",
 	"price_external": true,
