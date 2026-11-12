@@ -112,8 +112,8 @@
       "label": "Notify the customer when the shipment is created",
       "type": "boolean",
       "ui": "toggle",
-      "description": "Sends Swell's orders.shipped notification when the label creates the shipment. On by default, the same as creating a shipment in the dashboard.",
-      "default": true
+      "description": "Sends Swell's orders.shipped notification when the label creates the shipment. Off by default, so existing stores are unchanged.",
+      "default": false
     },
     {
       "id": "enabled",

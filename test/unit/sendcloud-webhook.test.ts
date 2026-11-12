@@ -111,9 +111,9 @@ describe("sendcloud-webhook", () => {
         tracking_code: "3SABCD123",
         service: "PostNL Standard",
         service_name: "PostNL Standard",
-        $notify: "orders.shipped",
       }),
     );
+    expect(postFn.mock.calls[0][1].$notify).toBeUndefined();
     expect(put).toHaveBeenCalledWith("/orders/order_1", {
       $app: {
         sendcloud: {
@@ -128,6 +128,56 @@ describe("sendcloud-webhook", () => {
         },
       },
     });
+  });
+
+  it("notifies the customer only when that setting is on", async () => {
+    const { req, post: postFn } = await setup({
+      settings: { ...SETTINGS, notify_customer: true },
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } }),
+    });
+
+    await post(req);
+
+    expect(postFn.mock.calls[0][1].$notify).toBe("orders.shipped");
+  });
+
+  it("ships each bundle component with its bundle_item_id", async () => {
+    const order: any = makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } });
+    order.items = [
+      {
+        id: "pack",
+        delivery: "shipment",
+        quantity: 1,
+        quantity_shipment_deliverable: 1,
+        product_id: "bundle",
+        bundle_items: [
+          {
+            id: "component",
+            product_id: "pouch",
+            quantity: 4,
+            quantity_total: 4,
+            quantity_shipment_deliverable: 4,
+          },
+        ],
+      },
+    ];
+    const { req, post: postFn } = await setup({ order });
+
+    await post(req);
+
+    expect(postFn).toHaveBeenCalledWith(
+      "/shipments",
+      expect.objectContaining({
+        items: [
+          {
+            order_item_id: "pack",
+            bundle_item_id: "component",
+            product_id: "pouch",
+            quantity: 4,
+          },
+        ],
+      }),
+    );
   });
 
   it("does not notify the customer when that setting is off", async () => {

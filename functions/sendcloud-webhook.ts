@@ -154,20 +154,69 @@ export async function post(req: SwellRequest) {
   return { received: true, order_found: true, updated: true };
 }
 
+function nonNegativeInt(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+// same quantity rule as the previous Sendcloud status webhook
+function shippableQuantity(item: any, useQuantityTotal: boolean): number {
+  const fromShipment = nonNegativeInt(item?.quantity_shipment_deliverable);
+  if (fromShipment !== null) return fromShipment;
+  const fromDeliverable = nonNegativeInt(item?.quantity_deliverable);
+  if (fromDeliverable !== null) return fromDeliverable;
+
+  const canceled = Math.max(0, Number(item?.quantity_canceled) || 0);
+  let base = Math.max(0, Number(item?.quantity) || 0);
+  if (useQuantityTotal) {
+    const total = nonNegativeInt(item?.quantity_total);
+    if (total !== null && total > 0) base = total;
+  }
+  return Math.max(0, Math.floor(base - canceled));
+}
+
+function shipmentItems(order: any): object[] {
+  const lines = [];
+  for (const item of order.items || []) {
+    if (item?.delivery !== 'shipment') continue;
+    const children = Array.isArray(item.bundle_items) ? item.bundle_items : [];
+    const hasBundle = children.some((child: any) => child?.id && child?.product_id);
+    if (hasBundle) {
+      for (const child of children) {
+        if (!child?.id || !child?.product_id) continue;
+        const quantity = shippableQuantity(child, true);
+        if (quantity <= 0) continue;
+        lines.push({
+          order_item_id: item.id,
+          bundle_item_id: child.id,
+          product_id: child.product_id,
+          quantity,
+          ...(child.variant_id ? { variant_id: child.variant_id } : {}),
+        });
+      }
+      continue;
+    }
+    const quantity = shippableQuantity(item, false);
+    if (quantity <= 0) continue;
+    lines.push({
+      order_item_id: item.id,
+      product_id: item.product_id,
+      variant_id: item.variant_id,
+      quantity,
+    });
+  }
+  return lines;
+}
+
 async function createSwellShipment(
   swell: SwellAPI,
   order: any,
   parcel: SendcloudParcel,
   settings: { notify_customer?: boolean },
 ): Promise<string | null> {
-  const items = (order.items || [])
-    .filter((item: any) => item.delivery === 'shipment' && item.quantity_shipment_deliverable > 0)
-    .map((item: any) => ({
-      order_item_id: item.id,
-      product_id: item.product_id,
-      variant_id: item.variant_id,
-      quantity: item.quantity_shipment_deliverable,
-    }));
+  const items = shipmentItems(order);
 
   if (!items.length) {
     console.log(`Sendcloud: order ${order.number} has nothing left to ship`);
@@ -198,7 +247,7 @@ async function createSwellShipment(
     tracking_code: parcel.tracking_number,
     notes: `Sendcloud parcel ${parcel.id}${parcel.tracking_url ? `: ${parcel.tracking_url}` : ''}`,
     // same notification Swell sends when a shipment is created in the dashboard
-    ...(settings.notify_customer !== false && { $notify: 'orders.shipped' }),
+    ...(settings.notify_customer === true && { $notify: 'orders.shipped' }),
   });
 
   console.log(`Sendcloud: created shipment ${shipment.id} for order ${order.number}`);
