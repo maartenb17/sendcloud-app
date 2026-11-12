@@ -1,6 +1,6 @@
 {
 	"description": "Send orders to Sendcloud",
-	"id": "smpl-sendcloud",
+	"id": "smpl_sendcloud",
 	"name": "Sendcloud (SMPL)",
 	"type": "integration",
 	"version": "1.0.3",

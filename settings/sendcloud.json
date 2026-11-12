@@ -29,8 +29,8 @@
       "type": "short_text",
       "readonly": true,
       "description": "Pattern of the webhook URL. Replace {store-id} with your store ID and {public-key} with your Swell public key, then paste it into Sendcloud → Settings → Integrations → Sendcloud API → Webhook URL and enable webhook feedback.",
-      "default": "https://{store-id}:{public-key}@{store-id}.swell.store/functions/smpl-sendcloud/sendcloud-webhook",
-      "placeholder": "https://{store-id}:{public-key}@{store-id}.swell.store/functions/smpl-sendcloud/sendcloud-webhook"
+      "default": "https://{store-id}:{public-key}@{store-id}.swell.store/functions/smpl_sendcloud/sendcloud-webhook",
+      "placeholder": "https://{store-id}:{public-key}@{store-id}.swell.store/functions/smpl_sendcloud/sendcloud-webhook"
     },
     {
       "id": "webhook_signature_key",
