@@ -63,6 +63,13 @@
       ],
       "bulk_actions": [
         {
+          "id": "check_and_send",
+          "label": "Check and send to Sendcloud",
+          "function": "check-and-send",
+          "loading_label": "Checking orders…",
+          "hint": "Up to 10 orders. Uses the same rules as a paid order: skips test and canceled orders, holds a separate order schedule until the invoice is paid and nothing is overdue, and sends the order when it may go. A held order keeps that status, so a later paid invoice sends it."
+        },
+        {
           "id": "send_to_sendcloud",
           "label": "Send to Sendcloud",
           "function": "send-to-sendcloud",
@@ -75,11 +82,18 @@
       "id": "edit",
       "extra_actions": [
         {
+          "id": "check_and_send",
+          "label": "Check and send to Sendcloud",
+          "function": "check-and-send",
+          "loading_label": "Checking this order…",
+          "hint": "Uses the same rules as a paid order. Skips a test or canceled order. Holds a separate order schedule until the invoice is paid and nothing is overdue, and stores that status so a later paid invoice sends the order. Sends the order when it may go."
+        },
+        {
           "id": "send_to_sendcloud",
           "label": "Send to Sendcloud",
           "function": "send-to-sendcloud",
           "loading_label": "Sending to Sendcloud…",
-          "hint": "Sends this order, or updates it in Sendcloud when it is already there and has no label. Unpaid and canceled orders are skipped."
+          "hint": "Sends this order, or updates it in Sendcloud when it is already there and has no label. Unpaid and canceled orders are skipped. Waiting and test orders are sent too."
         }
       ],
       "tabs": [

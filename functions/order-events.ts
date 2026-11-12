@@ -15,10 +15,10 @@ import {
   isTestOrder,
   orderClosestToInvoice,
   pushOrder,
-  renewalInvoice,
   shippableItems,
   subscriptionInArrears,
 } from './lib/sendcloud';
+import { syncOrder } from './lib/sync-order';
 
 export const config: SwellConfig = {
   description: 'Send orders to Sendcloud and remove them when canceled',
@@ -70,9 +70,8 @@ async function handleOrder(req: SwellRequest) {
     return;
   }
 
-  const appData = getAppData(order, appId || 'sendcloud');
-
   if (eventType === 'order.canceled') {
+    const appData = getAppData(order, appId || 'sendcloud');
     if (appData.sendcloud_order_id) {
       try {
         await deleteOrder(settings, appData.sendcloud_order_id);
@@ -91,74 +90,10 @@ async function handleOrder(req: SwellRequest) {
   if (eventType !== syncEvent) {
     return;
   }
-  if (isCanceledOrder(order)) {
-    console.log(`Sendcloud: order ${order.number} is canceled, skipping`);
-    return;
-  }
-  if (settings.skip_test_orders === true && isTestOrder(order)) {
-    console.log(`Sendcloud: order ${order.number} is a test order, skipping`);
-    return;
-  }
-  if (appData.sendcloud_order_id) {
-    console.log(`Sendcloud: order ${order.number} already sent as Sendcloud order ${appData.sendcloud_order_id}`);
-    return;
-  }
-  if (!shippableItems(order).length) {
-    console.log(`Sendcloud: order ${order.number} has no shippable items, skipping`);
-    return;
-  }
-  if (!order.shipping?.address1 || !order.shipping?.country) {
-    await swell.put(`/orders/${orderId}`, req.appValues({ sendcloud_error: 'Missing shipping address' }));
-    return;
-  }
 
-  let invoiceId: string | undefined;
-  if (settings.hold_separate_order_schedule === true) {
-    const decision = await renewalInvoice(swell, appId || 'sendcloud', order);
-    if (decision.block === 'canceled') {
-      console.log(`Sendcloud: order ${order.number} subscription is canceled, skipping`);
-      return;
-    }
-    if (decision.applies && decision.invoice?.status !== 'paid') {
-      await swell.put(
-        `/orders/${orderId}`,
-        req.appValues({
-          sendcloud_status: WAITING_FOR_INVOICE,
-          ...(decision.invoice?.id && { sendcloud_invoice_id: decision.invoice.id }),
-          sendcloud_error: null,
-        }),
-      );
-      console.log(`Sendcloud: order ${order.number} is waiting for invoice payment`);
-      return;
-    }
-    if (decision.block === 'overdue') {
-      await swell.put(
-        `/orders/${orderId}`,
-        req.appValues({
-          sendcloud_status: WAITING_FOR_OVERDUE,
-          ...(decision.invoice?.id && { sendcloud_invoice_id: decision.invoice.id }),
-          sendcloud_error: null,
-        }),
-      );
-      console.log(`Sendcloud: order ${order.number} is waiting for overdue payments`);
-      return;
-    }
-    invoiceId = decision.invoice?.id;
-  }
-
-  try {
-    const created = await pushOrder(swell, settings, order, (data) => req.appValues(data), 
-      invoiceId ? { sendcloud_invoice_id: invoiceId } : {},
-    );
-    console.log(`Sendcloud: sent order ${order.number} as Sendcloud order ${created?.id}`);
-  } catch (err: any) {
-    const message = err?.message || String(err);
-    console.error(`Sendcloud: failed to send order ${order.number} - ${message}`);
-    await swell.put(`/orders/${orderId}`, req.appValues({ sendcloud_error: message }));
-    if (err instanceof SendcloudError && err.status < 500) {
-      return;
-    }
-    throw err;
+  const outcome = await syncOrder(swell, settings, order, appId || 'sendcloud', (data) => req.appValues(data));
+  if (outcome.status === 'failed' && outcome.retry) {
+    throw outcome.error;
   }
 }
 
