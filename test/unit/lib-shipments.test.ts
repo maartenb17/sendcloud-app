@@ -23,6 +23,36 @@ function client({ shipments = [[], []] as any[][], left = 2, post = vi.fn().mock
   } as any;
 }
 
+function bundleOrder() {
+  const order = makeOrder();
+  order.items = [
+    {
+      id: "pack",
+      delivery: "shipment",
+      quantity: 1,
+      quantity_shipment_deliverable: 1,
+      product_id: "bundle",
+      bundle_items: [
+        { id: "pouch", product_id: "pouch_prod", quantity: 4, quantity_shipment_deliverable: 4 },
+        { id: "card", product_id: "card_prod", quantity: 1, quantity_shipment_deliverable: 1 },
+      ],
+    },
+  ];
+  return order;
+}
+
+function bundleClient(reread: any) {
+  return {
+    get: vi.fn(async (url: string) => {
+      if (url === "/shipments") return { results: [] };
+      if (url === "/orders/order_1") return reread;
+      return null;
+    }),
+    post: vi.fn().mockResolvedValue({ id: "ship_new" }),
+    put: vi.fn().mockResolvedValue({}),
+  } as any;
+}
+
 describe("createSwellShipment", () => {
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -52,6 +82,54 @@ describe("createSwellShipment", () => {
     const reused = client({ shipments: [[{ id: "ship_old" }]] });
     await expect(createSwellShipment(reused, makeOrder(), PARCEL, { notify: true })).resolves.toBe("ship_old");
     expect(reused.post).not.toHaveBeenCalled();
+  });
+
+  it("ships one line per bundle component, not the bundle itself", async () => {
+    const order = makeOrder();
+    order.items = [
+      {
+        id: "pack",
+        delivery: "shipment",
+        quantity: 1,
+        quantity_shipment_deliverable: 1,
+        product_id: "bundle",
+        bundle_items: [
+          { id: "pouch", product_id: "pouch_prod", variant_id: "pouch_var", quantity: 4, quantity_shipment_deliverable: 4 },
+          { id: "card", product_id: "card_prod", quantity: 1, quantity_total: 1 },
+        ],
+      },
+    ];
+    const swell = client();
+    await createSwellShipment(swell, order, PARCEL);
+    expect(swell.post).toHaveBeenCalledWith(
+      "/shipments",
+      expect.objectContaining({
+        $validate_items: true,
+        items: [
+          { order_item_id: "pack", bundle_item_id: "pouch", product_id: "pouch_prod", variant_id: "pouch_var", quantity: 4 },
+          { order_item_id: "pack", bundle_item_id: "card", product_id: "card_prod", quantity: 1 },
+        ],
+      }),
+    );
+  });
+
+  it("retries a refused bundle when each component is still deliverable, even if the parent quantity is smaller", async () => {
+    const order = bundleOrder();
+    const swell = bundleClient(order);
+    swell.post.mockRejectedValue(refusal(CANNOT_SHIP));
+    await expect(createSwellShipment(swell, order, PARCEL)).rejects.toBeInstanceOf(ShipmentPending);
+  });
+
+  it("reports a bundle shipped elsewhere when a component no longer has its quantity", async () => {
+    const order = bundleOrder();
+    const reread = bundleOrder();
+    reread.items[0].bundle_items[1].quantity_shipment_deliverable = 0;
+    reread.items[0].quantity_shipment_deliverable = 4;
+    const swell = bundleClient(reread);
+    swell.post.mockRejectedValue(refusal(CANNOT_SHIP));
+    const error = await createSwellShipment(swell, order, PARCEL).catch((e) => e);
+    expect(error).toBeInstanceOf(ItemsAlreadyShipped);
+    expect(error.message).toBe(CANNOT_SHIP.items.message);
   });
 
   it("reuses the order's shipment with the parcel's tracking number", async () => {

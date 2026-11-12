@@ -151,7 +151,7 @@ export async function post(req: SwellRequest) {
   if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id && sentByApp) {
     try {
       values.sendcloud_shipment_id = await createSwellShipment(swell, order, parcel, {
-        notify: settings.notify_customer !== false,
+        notify: settings.notify_customer === true,
       });
       values.sendcloud_shipment_status = SHIPMENT_CREATED;
       values.sendcloud_note = null;

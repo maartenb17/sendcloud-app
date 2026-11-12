@@ -31,7 +31,7 @@ All credentials and options are app settings (`settings/sendcloud.json`). Nothin
 | Default shipping option code | no | | Preselects a Sendcloud shipping option on each order, e.g. `postnl:standard`. |
 | Default parcel weight (kg) | no | 1 | Used when the order's items have no shipment weight. |
 | Create Swell shipment when label is created | no | on | Fulfill the Swell order with the Sendcloud tracking number. |
-| Notify the customer when the shipment is created | no | on | Sends Swell's `orders.shipped` notification when that shipment is created. |
+| Notify the customer when the shipment is created | no | off | Sends Swell's `orders.shipped` notification when that shipment is created. Off by default, so existing stores are unchanged. |
 | Enabled | no | on | When off, orders and cancellations aren't sent, and Sendcloud webhooks are verified and acknowledged without updating orders or creating shipments. Test connection still works and says the app is off. |
 
 ## Setup
@@ -58,7 +58,7 @@ Data stored on each order under `$app.sendcloud` (`models/orders.json`): `sendcl
 
 **Weights:** Swell item weights are line totals in the store's weight unit (`/settings/shipments` → `weight_unit`, default `lb`). They're converted to kg per unit for each item and summed for the whole order.
 
-**Shipments:** the shipment covers every item still to be shipped (`quantity_shipment_deliverable`) and is created with `$validate_items: true`, so Swell refuses items the order no longer has left to ship. The webhook then:
+**Shipments:** the shipment covers every item still to be shipped (`quantity_shipment_deliverable`) and is created with `$validate_items: true`, so Swell refuses items the order no longer has left to ship. A bundle is one line per component, with `bundle_item_id`, and those quantities are checked per component. The webhook then:
 
 - reuses an active shipment of the order with the parcel's tracking number (a resent webhook), and cancels its own copy if a parallel webhook created one first;
 - when nothing is left to ship, or Swell refuses the items because they were shipped by another shipment, refunded or canceled, saves the tracking without a shipment, sets `sendcloud_shipment_status` to `shipped_elsewhere` and writes the reason to `sendcloud_note`;
@@ -73,7 +73,7 @@ A created or reused shipment sets `sendcloud_shipment_status` to `created` and c
 - **No label creation:** the app doesn't create labels itself. Labels are created in Sendcloud. Sendcloud's v2 Parcels API is blocked for newer accounts, and v3 labels need the Shipments API, which isn't implemented yet.
 - **No checkout rates:** customers don't see Sendcloud shipping rates at checkout. That needs a separate shipping extension.
 - **One parcel per order:** only one parcel is tracked per order. A second parcel replaces the first only after the first is canceled. Multi-parcel (multicollo) shipments aren't tracked separately.
-- **No partial retry:** if Swell refuses the shipment because some of its items were shipped another way at the same time, the app creates no shipment and notes it; ship the rest by hand. Bundles shipped as one line aren't checked by Swell.
+- **No partial retry:** if Swell refuses the shipment because some of its items were shipped another way at the same time, the app creates no shipment and notes it; ship the rest by hand. Bundle components are checked per component, not as one line for the bundle.
 - **Order matching:** webhook updates are matched to Swell orders by order number.
 - **Cancel doesn't cancel labels:** canceling a Swell order removes it from Sendcloud's Incoming Orders but doesn't cancel a label that was already created.
 - **Currencies:** Sendcloud's v3 Orders API documents only EUR, GBP and USD prices. Orders in other currencies may be rejected, and the error is shown on the order.
