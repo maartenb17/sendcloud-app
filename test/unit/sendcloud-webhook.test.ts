@@ -109,6 +109,7 @@ describe("sendcloud-webhook", () => {
         tracking_code: "3SABCD123",
         service: "PostNL Standard",
         service_name: "PostNL Standard",
+        $validate_items: true,
       }),
     );
     expect(put).toHaveBeenCalledWith("/orders/order_1", {
@@ -122,6 +123,7 @@ describe("sendcloud-webhook", () => {
           sendcloud_carrier: "postnl",
           sendcloud_status_timestamp: 1000,
           sendcloud_shipment_id: "shipment_1",
+          sendcloud_note: null,
         },
       },
     });
@@ -181,5 +183,50 @@ describe("sendcloud-webhook", () => {
         $app: { sendcloud: expect.objectContaining({ sendcloud_shipment_id: null, sendcloud_status_id: 2000 }) },
       }),
     );
+  });
+
+  it("notes the order instead of shipping items already shipped elsewhere", async () => {
+    const order = makeOrder();
+    order.items[0].quantity_shipment_deliverable = 0;
+    const { req, put, post: postFn } = await setup({ order });
+
+    await expect(post(req)).resolves.toMatchObject({ updated: true });
+
+    expect(postFn).not.toHaveBeenCalled();
+    const values = put.mock.calls.at(-1)[1].$app.sendcloud;
+    expect(values.sendcloud_tracking_number).toBe("3SABCD123");
+    expect(values.sendcloud_shipment_id).toBeUndefined();
+    expect(values.sendcloud_note).toContain("already shipped by another shipment");
+  });
+
+  it("saves tracking and answers with an error while the order's shipments are locked", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { req, put, post: postFn } = await setup();
+    postFn.mockRejectedValue(
+      Object.assign(new Error("POST /shipments"), {
+        name: "SwellError",
+        status: 400,
+        body: { order_id: { message: "Order shipments are being updated, please try again" } },
+      }),
+    );
+
+    await expect(post(req)).rejects.toMatchObject({ status: 503 });
+
+    const values = put.mock.calls.at(-1)[1].$app.sendcloud;
+    expect(values.sendcloud_tracking_number).toBe("3SABCD123");
+    expect(values.sendcloud_shipment_id).toBeUndefined();
+    expect(values.sendcloud_note).toBeUndefined();
+  });
+
+  it("clears the note when the parcel is canceled", async () => {
+    const { req, put } = await setup({
+      payload: { action: "parcel_status_changed", parcel: { ...PARCEL, status: { id: 2000, message: "Cancelled" } } },
+      order: makeOrder({ $app: { sendcloud: { sendcloud_parcel_id: 5001, sendcloud_note: "No Swell shipment" } } }),
+    });
+
+    await post(req);
+
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put.mock.calls[0][1].$app.sendcloud.sendcloud_note).toBeNull();
   });
 });

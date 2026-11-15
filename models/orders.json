@@ -36,6 +36,10 @@
     "sendcloud_error": {
       "type": "string"
     },
+    "sendcloud_note": {
+      "type": "string",
+      "description": "Why no Swell shipment was created for the parcel"
+    },
     "sendcloud_status_timestamp": {
       "type": "float",
       "description": "Timestamp of the latest applied Sendcloud webhook, used to skip out-of-order updates"

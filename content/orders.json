@@ -40,6 +40,12 @@
       "readonly": true
     },
     {
+      "id": "sendcloud_note",
+      "label": "Note",
+      "type": "long_text",
+      "readonly": true
+    },
+    {
       "id": "sendcloud_error",
       "label": "Error",
       "type": "long_text",
@@ -102,10 +108,20 @@
               "id": "sendcloud_tracking_url"
             },
             {
+              "id": "sendcloud_note",
+              "conditions": {
+                "sendcloud_note": {
+                  "$exists": true,
+                  "$ne": null
+                }
+              }
+            },
+            {
               "id": "sendcloud_error",
               "conditions": {
                 "sendcloud_error": {
-                  "$exists": true
+                  "$exists": true,
+                  "$ne": null
                 }
               }
             }

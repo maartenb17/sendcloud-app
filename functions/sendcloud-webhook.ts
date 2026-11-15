@@ -8,6 +8,7 @@ import {
   toPythonJson,
   verifySignature,
 } from './lib/sendcloud';
+import { ItemsAlreadyShipped, ShipmentPending, createSwellShipment, itemsShippedNote } from './lib/shipments';
 
 export const config: SwellConfig = {
   description: 'Receive Sendcloud parcel status updates',
@@ -132,70 +133,40 @@ export async function post(req: SwellRequest) {
     !NO_LABEL_STATUSES.includes(statusId) &&
     !isCanceled;
 
+  let pendingError: ShipmentPending | undefined;
   if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id) {
-    const shipmentId = await createSwellShipment(swell, order, parcel);
-    if (shipmentId) {
-      values.sendcloud_shipment_id = shipmentId;
+    try {
+      values.sendcloud_shipment_id = await createSwellShipment(swell, order, parcel);
+      values.sendcloud_note = null;
+    } catch (err) {
+      if (err instanceof ItemsAlreadyShipped) {
+        values.sendcloud_note = itemsShippedNote(err.message);
+      } else if (err instanceof ShipmentPending) {
+        pendingError = err;
+      } else {
+        throw err;
+      }
     }
   }
 
-  if (isCanceled && appData.sendcloud_shipment_id) {
-    await swell.put(`/shipments/${appData.sendcloud_shipment_id}`, { canceled: true });
-    values.sendcloud_shipment_id = null;
-    console.log(`Sendcloud: canceled shipment ${appData.sendcloud_shipment_id} for order ${order.number}`);
+  if (isCanceled) {
+    values.sendcloud_note = null;
+    if (appData.sendcloud_shipment_id) {
+      await swell.put(`/shipments/${appData.sendcloud_shipment_id}`, { canceled: true });
+      values.sendcloud_shipment_id = null;
+      console.log(`Sendcloud: canceled shipment ${appData.sendcloud_shipment_id} for order ${order.number}`);
+    }
   }
 
   await swell.put(`/orders/${order.id}`, req.appValues(values));
 
-  return { received: true, order_found: true, updated: true };
-}
-
-async function createSwellShipment(
-  swell: SwellAPI,
-  order: any,
-  parcel: SendcloudParcel,
-): Promise<string | null> {
-  const items = (order.items || [])
-    .filter((item: any) => item.delivery === 'shipment' && item.quantity_shipment_deliverable > 0)
-    .map((item: any) => ({
-      order_item_id: item.id,
-      product_id: item.product_id,
-      variant_id: item.variant_id,
-      quantity: item.quantity_shipment_deliverable,
-    }));
-
-  if (!items.length) {
-    console.log(`Sendcloud: order ${order.number} has nothing left to ship`);
-    return null;
+  // tracking is saved; an error response lets the shipment be retried by a resent or the next webhook
+  if (pendingError) {
+    console.warn(`Sendcloud: ${pendingError.message}`);
+    throw new SwellError(pendingError.message, { status: 503 });
   }
 
-  const shipping = order.shipping || {};
-  const shipment = await swell.post('/shipments', {
-    order_id: order.id,
-    items,
-    destination: {
-      name: shipping.name,
-      first_name: shipping.first_name,
-      last_name: shipping.last_name,
-      address1: shipping.address1,
-      address2: shipping.address2,
-      city: shipping.city,
-      state: shipping.state,
-      zip: shipping.zip,
-      country: shipping.country,
-      phone: shipping.phone,
-    },
-    carrier: parcel.carrier?.code,
-    carrier_name: parcel.carrier?.code,
-    // the dashboard shows `service` in the shipment dialog, so use the readable method name, not the numeric id
-    service: parcel.shipment?.name || (parcel.shipment?.id ? String(parcel.shipment.id) : undefined),
-    service_name: parcel.shipment?.name,
-    tracking_code: parcel.tracking_number,
-    notes: `Sendcloud parcel ${parcel.id}${parcel.tracking_url ? `: ${parcel.tracking_url}` : ''}`,
-  });
-
-  console.log(`Sendcloud: created shipment ${shipment.id} for order ${order.number}`);
-  return shipment.id;
+  return { received: true, order_found: true, updated: true };
 }
 
 function safeParse(text: string): unknown {
