@@ -41,7 +41,7 @@ describe("test-connection action", () => {
       json(401, { error: { code: 401, status: "Unauthorized", message: "The request could not be authorized" } }),
     );
 
-    await expect(testConnection(req)).rejects.toThrow(/didn't accept the Public Key and Secret Key/);
+    await expect(testConnection(req)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/didn't accept the Public Key and Secret Key/) });
   });
 
   it("fails when the integration does not belong to the keys", async () => {
@@ -51,15 +51,27 @@ describe("test-connection action", () => {
         : json(404, { error: { code: 404, message: "Not found" } }),
     );
 
-    await expect(testConnection(req)).rejects.toThrow(/integration 626842 doesn't belong to these keys/);
+    await expect(testConnection(req)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/integration 626842 doesn't belong to these keys/) });
   });
 
   it("asks for the missing settings before calling Sendcloud", async () => {
     const req = request({ public_key: "pub" }, () => json(200, {}));
 
-    await expect(testConnection(req)).rejects.toThrow(
-      "Add the Secret Key and Integration ID and save the settings first.",
-    );
+    await expect(testConnection(req)).rejects.toMatchObject({
+      status: 400,
+      message: "Add the Secret Key and Integration ID and save the settings first.",
+    });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("fails with a red popup when Sendcloud can't be reached", async () => {
+    const req = request(SETTINGS, () => {
+      throw new TypeError("fetch failed");
+    });
+
+    await expect(testConnection(req)).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/^Couldn't reach Sendcloud/),
+    });
   });
 });

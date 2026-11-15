@@ -27,7 +27,7 @@ async function findShipmentsByTracking(swell: SwellAPI, orderId: string, trackin
   if (!trackingNumber) return [];
   const result: any = await swell.get('/shipments', {
     where: { order_id: orderId, tracking_code: trackingNumber, canceled: { $ne: true } },
-    limit: 1000,
+    limit: 25,
   });
   return (result?.results || []).sort(
     (a: any, b: any) => String(a.date_created).localeCompare(String(b.date_created)) || String(a.id).localeCompare(String(b.id)),
