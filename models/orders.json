@@ -39,7 +39,7 @@
     "sendcloud_shipment_status": {
       "type": "string",
       "enum": ["created", "shipped_elsewhere"],
-      "description": "Whether the app created the Swell shipment for the parcel or the items were shipped elsewhere"
+      "description": "Whether the app created the Swell shipment for the parcel or found nothing left to ship (shipped elsewhere, refunded or canceled)"
     },
     "sendcloud_note": {
       "type": "string",

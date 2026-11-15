@@ -39,7 +39,7 @@
         },
         {
           "value": "shipped_elsewhere",
-          "label": "Not created, shipped elsewhere"
+          "label": "Not created, nothing left to ship"
         }
       ]
     },
