@@ -134,7 +134,7 @@ describe("order-events", () => {
 
   it("deletes the Sendcloud order when the Swell order is canceled", async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
-    const { req } = setup({
+    const { req, put } = setup({
       eventType: "order.canceled",
       order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } }),
     });
@@ -144,6 +144,45 @@ describe("order-events", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://panel.sendcloud.sc/api/v3/orders/669");
     expect(init.method).toBe("DELETE");
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: { sendcloud: { sendcloud_status: "Removed from Sendcloud", sendcloud_error: null } },
+    });
+  });
+
+  it("keeps the parcel status when a canceled order already has a parcel", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const { req, put } = setup({
+      eventType: "order.canceled",
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_parcel_id: 5001 } } }),
+    });
+
+    await handler(req);
+
+    expect(put).toHaveBeenCalledWith("/orders/order_1", { $app: { sendcloud: { sendcloud_error: null } } });
+  });
+
+  it("shows a refused removal on the order without retrying", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ message: "Forbidden" }, 403));
+    const { req, put } = setup({
+      eventType: "order.canceled",
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } }),
+    });
+
+    await expect(handler(req)).resolves.toBeUndefined();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: { sendcloud: { sendcloud_error: "Couldn't remove the canceled order from Sendcloud: Sendcloud 403: Forbidden" } },
+    });
+  });
+
+  it("saves the error and retries when Sendcloud is down during removal", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ message: "down" }, 503));
+    const { req, put } = setup({
+      eventType: "order.canceled",
+      order: makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } }),
+    });
+
+    await expect(handler(req)).rejects.toThrow("Sendcloud 503: down");
+    expect(put.mock.calls[0][1].$app.sendcloud.sendcloud_error).toContain("Sendcloud 503: down");
   });
 
   it("ignores 404 when deleting an order that is already gone", async () => {

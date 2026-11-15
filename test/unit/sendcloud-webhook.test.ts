@@ -82,6 +82,19 @@ describe("sendcloud-webhook", () => {
     await expect(post(req)).resolves.toMatchObject({ updated: true });
   });
 
+  it("acknowledges without saving when the app is turned off", async () => {
+    const { req, put, post: postFn } = await setup({ settings: { ...SETTINGS, enabled: false } });
+    await expect(post(req)).resolves.toEqual({ received: true, processed: false });
+    expect(req.swell.get).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(postFn).not.toHaveBeenCalled();
+  });
+
+  it("still rejects a bad signature when the app is turned off", async () => {
+    const { req } = await setup({ settings: { ...SETTINGS, enabled: false }, signature: "bad" });
+    await expect(post(req)).rejects.toMatchObject({ status: 401 });
+  });
+
   it("acknowledges other webhook actions", async () => {
     const { req, put } = await setup({ payload: { action: "integration_updated" } });
     await expect(post(req)).resolves.toEqual({ received: true });

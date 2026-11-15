@@ -4,12 +4,12 @@ Send Swell orders to [Sendcloud](https://www.sendcloud.com) and get tracking bac
 
 ## Features
 
-- **Orders to Sendcloud:** when an order is paid (or submitted, see settings) and has items to ship, it's sent to Sendcloud through the v3 Orders API (`POST /api/v3/orders`). It includes the shipping and billing address, customer, line items with SKU, prices and weights, order totals, and the checkout shipping service name. Sending the same order again updates it in Sendcloud rather than duplicating it.
-- **Canceled orders:** when a Swell order is canceled, it's removed from Sendcloud's Incoming Orders.
+- **Orders to Sendcloud:** when an order is paid (or submitted, see settings) and has items to ship, it's sent to Sendcloud through the v3 Orders API (`POST /api/v3/orders`). It includes the shipping and billing address, customer, line items with SKU, prices and weights, order totals, and the checkout shipping service name. Sending the same order again updates it in Sendcloud rather than duplicating it. An order without a shipping address isn't sent; its Sendcloud tab shows the error `Missing shipping address`.
+- **Canceled orders:** when a Swell order is canceled, it's removed from Sendcloud's Incoming Orders and the order's Sendcloud status becomes `Removed from Sendcloud` (an order with a parcel keeps the parcel status). If Sendcloud refuses the removal, the error is shown on the order.
 - **Tracking back to Swell:** Sendcloud's `parcel_status_changed` webhook updates the order with the parcel status, tracking number, tracking link and carrier. Requests are verified with the `Sendcloud-Signature` HMAC header, and updates that arrive out of order are ignored.
 - **Fulfillment:** once a parcel has a label, the app creates a Swell shipment with the carrier and tracking number for everything still to be shipped. If the parcel is later canceled, that shipment is canceled too.
 - **No double shipping:** if the order's items were already shipped another way, for example by hand, the app doesn't create a second shipment. It saves the tracking and shows a note on the order's Sendcloud tab instead.
-- **Order tab:** a **Sendcloud** tab on the order page shows the Sendcloud order ID, status, parcel ID, carrier, tracking number, tracking link and the last error.
+- **Order tab:** a **Sendcloud** tab on the order page shows the Sendcloud order ID, status, parcel ID, carrier, tracking number, tracking link, a note when no shipment was created, and the last error. Note and Error are shown only when set.
 - **Webhook URL pattern in settings:** the settings show the webhook URL pattern as a read-only value: `https://{store-id}:{public-key}@{store-id}.swell.store/functions/sendcloud/sendcloud-webhook`.
 
 ## Settings
@@ -27,7 +27,7 @@ All credentials and options are app settings (`settings/sendcloud.json`). Nothin
 | Default shipping option code | no | | Preselects a Sendcloud shipping option on each order, e.g. `postnl:standard`. |
 | Default parcel weight (kg) | no | 1 | Used when the order's items have no shipment weight. |
 | Create Swell shipment when label is created | no | on | Fulfill the Swell order with the Sendcloud tracking number. |
-| Enabled | no | on | Turns off sending orders and cancellations without uninstalling the app. |
+| Enabled | no | on | When off, orders and cancellations aren't sent, and Sendcloud webhooks are verified and acknowledged without updating orders or creating shipments. Test connection still works and says the app is off. |
 
 ## Setup
 
@@ -44,6 +44,7 @@ All credentials and options are app settings (`settings/sendcloud.json`). Nothin
 |---|---|---|
 | `functions/order-events.ts` | `order.submitted`, `order.paid`, `order.canceled` | Sends the order to Sendcloud on the event chosen in settings. Deletes the Sendcloud order on cancel. |
 | `functions/sendcloud-webhook.ts` | Public route, `POST` | Receives Sendcloud webhooks and updates the order and shipment. |
+| `functions/test-connection.ts` | Settings action **Test connection** | Read-only: checks the keys (`GET /api/v2/user`) and that the Integration ID belongs to them. Errors show as red popups. |
 | `functions/lib/sendcloud.ts` | Shared | Sendcloud API client, Swell order to Sendcloud order mapping, signature check. |
 | `functions/lib/shipments.ts` | Shared | Creates the Swell shipment without shipping items twice. |
 
@@ -70,7 +71,7 @@ The note is cleared when a shipment is created or the parcel is canceled.
 - **Order matching:** webhook updates are matched to Swell orders by order number.
 - **Cancel doesn't cancel labels:** canceling a Swell order removes it from Sendcloud's Incoming Orders but doesn't cancel a label that was already created.
 - **Currencies:** Sendcloud's v3 Orders API documents only EUR, GBP and USD prices. Orders in other currencies may be rejected, and the error is shown on the order.
-- **Retries:** errors from Sendcloud are saved to the order's `sendcloud_error`. Only Sendcloud 5xx errors are retried. Model-event functions that keep failing are turned off by the platform after about 4 days.
+- **Retries:** errors from Sendcloud are saved to the order's `sendcloud_error`. Only Sendcloud 5xx and network errors are retried. Model-event functions that keep failing are turned off by the platform after about 4 days.
 
 ## Development
 

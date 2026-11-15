@@ -52,7 +52,8 @@ export default async function (req: SwellRequest) {
     fail(err instanceof SendcloudError ? err.message : reachError(err));
   }
 
+  const off = settings.enabled === false ? ' The app is turned off in its settings, so nothing is sent or synced.' : '';
   return {
-    message: `Connected to Sendcloud account ${account}, integration ${String(integration.shop_name || settings.integration_id)}.`,
+    message: `Connected to Sendcloud account ${account}, integration ${String(integration.shop_name || settings.integration_id)}.${off}`,
   };
 }

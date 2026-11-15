@@ -64,6 +64,11 @@ export async function post(req: SwellRequest) {
     throw new SwellError('Invalid Sendcloud signature', { status: 401 });
   }
 
+  // turned off: acknowledged without saving anything
+  if (settings.enabled === false) {
+    return { received: true, processed: false };
+  }
+
   const payload = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as {
     action?: string;
     timestamp?: number;

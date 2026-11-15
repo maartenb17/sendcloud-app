@@ -45,18 +45,29 @@ export default async function (req: SwellRequest) {
   const appData = getAppData(order, appId);
 
   if (eventType === 'order.canceled') {
-    if (appData.sendcloud_order_id) {
-      try {
-        await deleteOrder(settings, appData.sendcloud_order_id);
-        console.log(`Sendcloud: removed order ${order.number} from Sendcloud incoming orders`);
-      } catch (err) {
-        // 404/410: order already gone
-        if (err instanceof SendcloudError && [404, 410].includes(err.status)) {
-          return;
-        }
+    if (!appData.sendcloud_order_id) return;
+    try {
+      await deleteOrder(settings, appData.sendcloud_order_id);
+      console.log(`Sendcloud: removed order ${order.number} from Sendcloud incoming orders`);
+    } catch (err: any) {
+      // 404/410: order already gone
+      if (!(err instanceof SendcloudError && [404, 410].includes(err.status))) {
+        const message = `Couldn't remove the canceled order from Sendcloud: ${err?.message || String(err)}`;
+        console.error(`Sendcloud: ${message}`);
+        await swell.put(`/orders/${orderId}`, req.appValues({ sendcloud_error: message }));
+        // only Sendcloud 5xx and network errors are worth a retry
+        if (err instanceof SendcloudError && err.status < 500) return;
         throw err;
       }
     }
+    // a parcel's status stays until its next webhook
+    await swell.put(
+      `/orders/${orderId}`,
+      req.appValues({
+        ...(!appData.sendcloud_parcel_id && { sendcloud_status: 'Removed from Sendcloud' }),
+        sendcloud_error: null,
+      }),
+    );
     return;
   }
 

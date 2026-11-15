@@ -35,6 +35,17 @@ describe("test-connection action", () => {
     ]);
   });
 
+  it("works while the app is turned off and says so", async () => {
+    const req = request({ ...SETTINGS, enabled: false }, (url) =>
+      url.endsWith("/user") ? json(200, { user: { username: "acme" } }) : json(200, { shop_name: "Swell store" }),
+    );
+
+    await expect(testConnection(req)).resolves.toEqual({
+      message:
+        "Connected to Sendcloud account acme, integration Swell store. The app is turned off in its settings, so nothing is sent or synced.",
+    });
+  });
+
   it("says the keys were rejected on a 401", async () => {
     // what Sendcloud sends for wrong keys
     const req = request(SETTINGS, () =>
