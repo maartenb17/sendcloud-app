@@ -98,6 +98,6 @@ describe("createSwellShipment", () => {
   });
 
   it("explains the note", () => {
-    expect(itemsShippedNote("nothing left to ship")).toContain("(nothing left to ship)");
+    expect(itemsShippedNote("nothing left to ship")).toContain("(nothing left to ship). Cancel the label in Sendcloud");
   });
 });

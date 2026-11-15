@@ -136,6 +136,7 @@ describe("sendcloud-webhook", () => {
           sendcloud_carrier: "postnl",
           sendcloud_status_timestamp: 1000,
           sendcloud_shipment_id: "shipment_1",
+          sendcloud_shipment_status: "created",
           sendcloud_note: null,
         },
       },
@@ -209,6 +210,7 @@ describe("sendcloud-webhook", () => {
     const values = put.mock.calls.at(-1)[1].$app.sendcloud;
     expect(values.sendcloud_tracking_number).toBe("3SABCD123");
     expect(values.sendcloud_shipment_id).toBeUndefined();
+    expect(values.sendcloud_shipment_status).toBe("shipped_elsewhere");
     expect(values.sendcloud_note).toContain("already shipped by another shipment");
   });
 
@@ -228,18 +230,21 @@ describe("sendcloud-webhook", () => {
     const values = put.mock.calls.at(-1)[1].$app.sendcloud;
     expect(values.sendcloud_tracking_number).toBe("3SABCD123");
     expect(values.sendcloud_shipment_id).toBeUndefined();
+    expect(values.sendcloud_shipment_status).toBeUndefined();
     expect(values.sendcloud_note).toBeUndefined();
   });
 
-  it("clears the note when the parcel is canceled", async () => {
+  it("clears the shipment status and note when the parcel is canceled", async () => {
     const { req, put } = await setup({
       payload: { action: "parcel_status_changed", parcel: { ...PARCEL, status: { id: 2000, message: "Cancelled" } } },
-      order: makeOrder({ $app: { sendcloud: { sendcloud_parcel_id: 5001, sendcloud_note: "No Swell shipment" } } }),
+      order: makeOrder({
+        $app: { sendcloud: { sendcloud_parcel_id: 5001, sendcloud_shipment_status: "shipped_elsewhere", sendcloud_note: "No Swell shipment" } },
+      }),
     });
 
     await post(req);
 
     expect(put).toHaveBeenCalledTimes(1);
-    expect(put.mock.calls[0][1].$app.sendcloud.sendcloud_note).toBeNull();
+    expect(put.mock.calls[0][1].$app.sendcloud).toMatchObject({ sendcloud_shipment_status: null, sendcloud_note: null });
   });
 });

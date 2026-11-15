@@ -36,6 +36,11 @@
     "sendcloud_error": {
       "type": "string"
     },
+    "sendcloud_shipment_status": {
+      "type": "string",
+      "enum": ["created", "shipped_elsewhere"],
+      "description": "Whether the app created the Swell shipment for the parcel or the items were shipped elsewhere"
+    },
     "sendcloud_note": {
       "type": "string",
       "description": "Why no Swell shipment was created for the parcel"

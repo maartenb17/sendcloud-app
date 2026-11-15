@@ -8,8 +8,8 @@ Send Swell orders to [Sendcloud](https://www.sendcloud.com) and get tracking bac
 - **Canceled orders:** when a Swell order is canceled, it's removed from Sendcloud's Incoming Orders and the order's Sendcloud status becomes `Removed from Sendcloud` (an order with a parcel keeps the parcel status). If Sendcloud refuses the removal, the error is shown on the order.
 - **Tracking back to Swell:** Sendcloud's `parcel_status_changed` webhook updates the order with the parcel status, tracking number, tracking link and carrier. Requests are verified with the `Sendcloud-Signature` HMAC header, and updates that arrive out of order are ignored.
 - **Fulfillment:** once a parcel has a label, the app creates a Swell shipment with the carrier and tracking number for everything still to be shipped. If the parcel is later canceled, that shipment is canceled too.
-- **No double shipping:** if the order's items were already shipped another way, for example by hand, the app doesn't create a second shipment. It saves the tracking and shows a note on the order's Sendcloud tab instead.
-- **Order tab:** a **Sendcloud** tab on the order page shows the Sendcloud order ID, status, parcel ID, carrier, tracking number, tracking link, a note when no shipment was created, and the last error. Note and Error are shown only when set.
+- **No double shipping:** if the order's items were already shipped another way, for example by hand, the app doesn't create a second shipment. It saves the tracking, sets the order's **Swell shipment** status to `Not created, shipped elsewhere` (also a column in the order list) and explains why in a note, so the label can be canceled in Sendcloud.
+- **Order tab:** a **Sendcloud** tab on the order page shows the Sendcloud order ID, parcel status, parcel ID, carrier, tracking number, the Swell shipment status (`Created` or `Not created, shipped elsewhere`), tracking link, a note when no shipment was created, and the last error. The order list shows the parcel status and the Swell shipment status as columns, under the Sendcloud icon. Note and Error are shown only when set.
 - **Webhook URL pattern in settings:** the settings show the webhook URL pattern as a read-only value: `https://{store-id}:{public-key}@{store-id}.swell.store/functions/sendcloud/sendcloud-webhook`.
 
 ## Settings
@@ -48,17 +48,17 @@ All credentials and options are app settings (`settings/sendcloud.json`). Nothin
 | `functions/lib/sendcloud.ts` | Shared | Sendcloud API client, Swell order to Sendcloud order mapping, signature check. |
 | `functions/lib/shipments.ts` | Shared | Creates the Swell shipment without shipping items twice. |
 
-Data stored on each order under `$app.sendcloud` (`models/orders.json`): `sendcloud_order_id`, `sendcloud_parcel_id`, `sendcloud_status_id`, `sendcloud_status`, `sendcloud_status_timestamp`, `sendcloud_tracking_number`, `sendcloud_tracking_url`, `sendcloud_carrier`, `sendcloud_shipment_id`, `sendcloud_note`, `sendcloud_error`.
+Data stored on each order under `$app.sendcloud` (`models/orders.json`): `sendcloud_order_id`, `sendcloud_parcel_id`, `sendcloud_status_id`, `sendcloud_status`, `sendcloud_status_timestamp`, `sendcloud_tracking_number`, `sendcloud_tracking_url`, `sendcloud_carrier`, `sendcloud_shipment_id`, `sendcloud_shipment_status` (`created` or `shipped_elsewhere`), `sendcloud_note`, `sendcloud_error`.
 
 **Weights:** Swell item weights are line totals in the store's weight unit (`/settings/shipments` → `weight_unit`, default `lb`). They're converted to kg per unit for each item and summed for the whole order.
 
 **Shipments:** the shipment covers every item still to be shipped (`quantity_shipment_deliverable`) and is created with `$validate_items: true`, so Swell refuses items the order no longer has left to ship. The webhook then:
 
 - reuses an active shipment of the order with the parcel's tracking number (a resent webhook), and cancels its own copy if a parallel webhook created one first;
-- when nothing is left to ship, or Swell refuses the items because they were shipped by another shipment, refunded or canceled, saves the tracking without a shipment and writes the reason to `sendcloud_note`;
+- when nothing is left to ship, or Swell refuses the items because they were shipped by another shipment, refunded or canceled, saves the tracking without a shipment, sets `sendcloud_shipment_status` to `shipped_elsewhere` and writes the reason to `sendcloud_note`;
 - when the order's shipments are being updated by another write, or Swell counted items reserved by a write in progress, saves the tracking and answers with a 503 error, so the shipment is created by a resent webhook or the next status update for the parcel.
 
-The note is cleared when a shipment is created or the parcel is canceled.
+A created or reused shipment sets `sendcloud_shipment_status` to `created` and clears the note. A canceled parcel clears both.
 
 **House numbers:** Sendcloud needs the street and house number separately. The first address line is split on a leading number (`417 Montgomery St`) or a trailing one (`Stationsstraat 12A`). If neither matches, the whole line is sent as the street.
 

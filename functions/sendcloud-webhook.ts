@@ -8,7 +8,14 @@ import {
   toPythonJson,
   verifySignature,
 } from './lib/sendcloud';
-import { ItemsAlreadyShipped, ShipmentPending, createSwellShipment, itemsShippedNote } from './lib/shipments';
+import {
+  ItemsAlreadyShipped,
+  SHIPMENT_CREATED,
+  SHIPPED_ELSEWHERE,
+  ShipmentPending,
+  createSwellShipment,
+  itemsShippedNote,
+} from './lib/shipments';
 
 export const config: SwellConfig = {
   description: 'Receive Sendcloud parcel status updates',
@@ -142,9 +149,11 @@ export async function post(req: SwellRequest) {
   if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id) {
     try {
       values.sendcloud_shipment_id = await createSwellShipment(swell, order, parcel);
+      values.sendcloud_shipment_status = SHIPMENT_CREATED;
       values.sendcloud_note = null;
     } catch (err) {
       if (err instanceof ItemsAlreadyShipped) {
+        values.sendcloud_shipment_status = SHIPPED_ELSEWHERE;
         values.sendcloud_note = itemsShippedNote(err.message);
       } else if (err instanceof ShipmentPending) {
         pendingError = err;
@@ -155,6 +164,7 @@ export async function post(req: SwellRequest) {
   }
 
   if (isCanceled) {
+    values.sendcloud_shipment_status = null;
     values.sendcloud_note = null;
     if (appData.sendcloud_shipment_id) {
       await swell.put(`/shipments/${appData.sendcloud_shipment_id}`, { canceled: true });

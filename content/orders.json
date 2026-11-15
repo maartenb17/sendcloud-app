@@ -28,6 +28,22 @@
       "readonly": true
     },
     {
+      "id": "sendcloud_shipment_status",
+      "label": "Swell shipment",
+      "type": "select",
+      "readonly": true,
+      "options": [
+        {
+          "value": "created",
+          "label": "Created"
+        },
+        {
+          "value": "shipped_elsewhere",
+          "label": "Not created, shipped elsewhere"
+        }
+      ]
+    },
+    {
       "id": "sendcloud_tracking_url",
       "label": "Tracking page",
       "type": "short_text",
@@ -59,6 +75,10 @@
         {
           "id": "sendcloud_status",
           "label": "Sendcloud"
+        },
+        {
+          "id": "sendcloud_shipment_status",
+          "label": "Sendcloud shipment"
         }
       ]
     },
@@ -100,7 +120,11 @@
               "fields": [
                 {
                   "id": "sendcloud_tracking_number",
-                  "admin_span": 4
+                  "admin_span": 2
+                },
+                {
+                  "id": "sendcloud_shipment_status",
+                  "admin_span": 2
                 }
               ]
             },

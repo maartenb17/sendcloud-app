@@ -1,5 +1,9 @@
 import type { SendcloudParcel } from './sendcloud';
 
+// sendcloud_shipment_status values
+export const SHIPMENT_CREATED = 'created';
+export const SHIPPED_ELSEWHERE = 'shipped_elsewhere';
+
 // the order's items were shipped elsewhere, refunded or canceled; the message is the reason
 export class ItemsAlreadyShipped extends Error {}
 
@@ -7,7 +11,7 @@ export class ItemsAlreadyShipped extends Error {}
 export class ShipmentPending extends Error {}
 
 export function itemsShippedNote(reason: string): string {
-  return `No Swell shipment was created for this parcel: the order's items were already shipped by another shipment, or refunded or canceled (${reason}).`;
+  return `No Swell shipment was created for this parcel: the order's items were already shipped by another shipment, or refunded or canceled (${reason}). Cancel the label in Sendcloud if it isn't needed.`;
 }
 
 // the order's items left to ship
