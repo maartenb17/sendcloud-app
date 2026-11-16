@@ -23,8 +23,8 @@ function client({ shipments = [[], []] as any[][], left = 2, post = vi.fn().mock
   } as any;
 }
 
-function bundleOrder() {
-  const order = makeOrder();
+function bundleOrder(): any {
+  const order: any = makeOrder();
   order.items = [
     {
       id: "pack",
@@ -85,7 +85,7 @@ describe("createSwellShipment", () => {
   });
 
   it("ships one line per bundle component, not the bundle itself", async () => {
-    const order = makeOrder();
+    const order: any = makeOrder();
     order.items = [
       {
         id: "pack",
