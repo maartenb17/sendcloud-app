@@ -73,6 +73,7 @@ async function checkAndSend(req: SwellRequest) {
       order,
       req.appId || 'sendcloud',
       (values) => req.appValues(values),
+      { resendCanceledParcel: true },
     );
     if (result.status === 'sent') {
       sent.push(String(order.number));

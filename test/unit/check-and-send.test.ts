@@ -189,6 +189,44 @@ describe("check-and-send", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("skips an order that still has an active label", async () => {
+    const order = makeOrder({
+      id: ORDER_ID,
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_parcel_id: 5001, sendcloud_status_id: 1000 } },
+    });
+    const { req } = requestFor([order], SETTINGS, plainGet([order]));
+
+    await expect(handler(req)).rejects.toThrow("already in Sendcloud");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends again after the label was canceled and keeps the parcel fields", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669, order_id: ORDER_ID }] }));
+    const order = makeOrder({
+      id: ORDER_ID,
+      $app: {
+        sendcloud: {
+          sendcloud_order_id: 669,
+          sendcloud_parcel_id: 5001,
+          sendcloud_status_id: 2000,
+          sendcloud_tracking_number: "3SOLD",
+        },
+      },
+    });
+    const { req, put } = requestFor([order], SETTINGS, plainGet([order]));
+
+    const result = await handler(req);
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body).toEqual([expect.objectContaining({ order_id: ORDER_ID, order_number: "100003" })]);
+    expect(result?.message).toContain("Sent 1 order to Sendcloud: 100003.");
+    const values = put.mock.calls.at(-1)?.[1].$app.sendcloud;
+    expect(values.sendcloud_order_id).toBe(669);
+    expect(values.sendcloud_parcel_id).toBeUndefined();
+    expect(values.sendcloud_status_id).toBeUndefined();
+    expect(values.sendcloud_tracking_number).toBeUndefined();
+  });
+
   it("refuses a bulk selection of more than 10 orders", async () => {
     const orders = Array.from({ length: 11 }, (_item, index) =>
       makeOrder({ id: index.toString(16).padStart(24, "b"), number: String(100000 + index) }),

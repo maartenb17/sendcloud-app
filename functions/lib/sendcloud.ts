@@ -5,6 +5,12 @@ export const API_V2_BASE = 'https://panel.sendcloud.sc/api/v2';
 export const NO_LABEL_STATUSES = [999, 1001, 1002]; // no label, being announced, announcement failed
 export const CANCELED_STATUSES = [1999, 2000, 2001]; // cancellation requested, cancelled, submitting cancellation
 
+// a stored parcel id is an active label unless Sendcloud has canceled that parcel
+export function hasActiveLabel(appData: { sendcloud_parcel_id?: unknown; sendcloud_status_id?: unknown }): boolean {
+  if (!appData?.sendcloud_parcel_id) return false;
+  return !CANCELED_STATUSES.includes(Number(appData.sendcloud_status_id));
+}
+
 export interface SendcloudSettings {
   public_key?: string;
   secret_key?: string;

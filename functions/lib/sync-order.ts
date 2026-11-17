@@ -4,6 +4,7 @@ import {
   WAITING_FOR_INVOICE,
   WAITING_FOR_OVERDUE,
   getAppData,
+  hasActiveLabel,
   isCanceledOrder,
   isTestOrder,
   pushOrder,
@@ -26,6 +27,7 @@ export async function syncOrder(
   order: any,
   appId: string,
   appValues: (data: Record<string, any>) => any,
+  options?: { resendCanceledParcel?: boolean },
 ): Promise<SyncOutcome> {
   const appData = getAppData(order, appId);
   if (isCanceledOrder(order)) {
@@ -36,7 +38,12 @@ export async function syncOrder(
     console.log(`Sendcloud: order ${order.number} is a test order, skipping`);
     return { status: 'skipped', reason: 'order is a test order' };
   }
-  if (appData.sendcloud_order_id) {
+  // a canceled parcel may be sent again; an order already in Sendcloud, or an active label, may not
+  const resendCanceled =
+    options?.resendCanceledParcel === true &&
+    Boolean(appData.sendcloud_parcel_id) &&
+    !hasActiveLabel(appData);
+  if (appData.sendcloud_order_id && !resendCanceled) {
     console.log(`Sendcloud: order ${order.number} already sent as Sendcloud order ${appData.sendcloud_order_id}`);
     return { status: 'skipped', reason: 'already in Sendcloud' };
   }

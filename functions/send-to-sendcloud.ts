@@ -5,6 +5,7 @@ import {
   WAITING_FOR_OVERDUE,
   getAppData,
   getSendcloudSettings,
+  hasActiveLabel,
   hasCredentials,
   isCanceledOrder,
   isTestOrder,
@@ -123,7 +124,7 @@ async function sendOne(req: SwellRequest, settings: Awaited<ReturnType<typeof ge
   if (!order.shipping?.address1 || !order.shipping?.country) {
     return { status: 'failed', reason: 'missing shipping address' };
   }
-  if (appData.sendcloud_parcel_id) {
+  if (hasActiveLabel(appData)) {
     return { status: 'skipped', reason: `Order ${order.number} already has a label in Sendcloud` };
   }
 
