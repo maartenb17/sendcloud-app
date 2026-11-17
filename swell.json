@@ -3,7 +3,7 @@
 	"id": "sendcloud",
 	"name": "Sendcloud",
 	"type": "integration",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"support_email": "support@swell.is",
 	"documentation_url": "https://developers.swell.is/app-guides/sendcloud",
 	"permissions": [],
