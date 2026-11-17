@@ -84,6 +84,31 @@ describe("createSwellShipment", () => {
     expect(reused.post).not.toHaveBeenCalled();
   });
 
+  it("does not ship a bundle component whose reserve total was already delivered", async () => {
+    const order: any = makeOrder();
+    order.items = [
+      {
+        id: "pack",
+        delivery: "shipment",
+        quantity: 1,
+        product_id: "bundle",
+        bundle_items: [
+          {
+            id: "component",
+            product_id: "pouch",
+            quantity: 4,
+            quantity_total: 4,
+            quantity_canceled: 0,
+            quantity_shipment_delivered: 4,
+          },
+        ],
+      },
+    ];
+    const swell = client();
+    await expect(createSwellShipment(swell, order, PARCEL)).rejects.toBeInstanceOf(ItemsAlreadyShipped);
+    expect(swell.post).not.toHaveBeenCalled();
+  });
+
   it("ships one line per bundle component, not the bundle itself", async () => {
     const order: any = makeOrder();
     order.items = [

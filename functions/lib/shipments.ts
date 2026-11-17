@@ -21,6 +21,13 @@ function nonNegativeInt(value: unknown): number | null {
   return Math.floor(n);
 }
 
+// already shipped units, when the deliverable fields are missing and the reserve total is all that remains
+function alreadyShipped(item: any): number {
+  const fromShipment = nonNegativeInt(item?.quantity_shipment_delivered);
+  if (fromShipment !== null) return fromShipment;
+  return nonNegativeInt(item?.quantity_delivered) ?? 0;
+}
+
 // bundle components use quantity_total when Swell has not stored a deliverable quantity yet
 function shippableQuantity(item: any, useQuantityTotal: boolean): number {
   const fromShipment = nonNegativeInt(item?.quantity_shipment_deliverable);
@@ -34,7 +41,7 @@ function shippableQuantity(item: any, useQuantityTotal: boolean): number {
     const total = nonNegativeInt(item?.quantity_total);
     if (total !== null && total > 0) base = total;
   }
-  return Math.max(0, Math.floor(base - canceled));
+  return Math.max(0, Math.floor(base - canceled - alreadyShipped(item)));
 }
 
 function bundleChildren(item: any): any[] {

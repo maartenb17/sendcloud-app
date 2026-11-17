@@ -60,7 +60,7 @@ Data stored on each order under `$app.sendcloud` (`models/orders.json`): `sendcl
 
 **Weights:** Swell item weights are line totals in the store's weight unit (`/settings/shipments` → `weight_unit`, default `lb`). They're converted to kg per unit for each item and summed for the whole order.
 
-**Shipments:** the shipment covers every item still to be shipped (`quantity_shipment_deliverable`) and is created with `$validate_items: true`, so Swell refuses items the order no longer has left to ship. A bundle is one line per component, with `bundle_item_id`, and those quantities are checked per component. The webhook then:
+**Shipments:** the shipment covers every item still to be shipped (`quantity_shipment_deliverable`) and is created with `$validate_items: true`, so Swell refuses items the order no longer has left to ship. A bundle is one line per component, with `bundle_item_id`, and those quantities are checked per component. If a component has no deliverable quantity stored, the reserve total is reduced by `quantity_canceled` and by `quantity_shipment_delivered` (or `quantity_delivered`). A component that was already shipped is not shipped again. The webhook then:
 
 - reuses an active shipment of the order with the parcel's tracking number (a resent webhook), and cancels its own copy if a parallel webhook created one first;
 - when nothing is left to ship, or Swell refuses the items because they were shipped by another shipment, refunded or canceled, saves the tracking without a shipment, sets `sendcloud_shipment_status` to `shipped_elsewhere` and writes the reason to `sendcloud_note`;

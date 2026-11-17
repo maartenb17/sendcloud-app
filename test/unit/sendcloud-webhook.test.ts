@@ -157,6 +157,38 @@ describe("sendcloud-webhook", () => {
     expect(postFn.mock.calls[0][1].$notify).toBe("orders.shipped");
   });
 
+  it("bundel al handmatig verzonden → shipped_elsewhere, geen tweede zending", async () => {
+    const order: any = makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } });
+    order.items = [
+      {
+        id: "pack",
+        delivery: "shipment",
+        quantity: 1,
+        product_id: "bundle",
+        bundle_items: [
+          {
+            id: "component",
+            product_id: "pouch",
+            quantity: 4,
+            quantity_total: 4,
+            quantity_canceled: 0,
+            quantity_delivered: 4,
+            quantity_shipment_delivered: 4,
+          },
+        ],
+      },
+    ];
+    const { req, put, post: postFn } = await setup({ order });
+
+    await expect(post(req)).resolves.toEqual({ received: true, order_found: true, updated: true });
+
+    expect(postFn).not.toHaveBeenCalled();
+    const values = put.mock.calls.at(-1)[1].$app.sendcloud;
+    expect(values.sendcloud_tracking_number).toBe("3SABCD123");
+    expect(values.sendcloud_shipment_id).toBeUndefined();
+    expect(values.sendcloud_shipment_status).toBe("shipped_elsewhere");
+  });
+
   it("ships each bundle component with its bundle_item_id", async () => {
     const order: any = makeOrder({ $app: { sendcloud: { sendcloud_order_id: "sc_1" } } });
     order.items = [
