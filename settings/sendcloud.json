@@ -117,6 +117,14 @@
       "default": true
     },
     {
+      "id": "only_shipments_for_sent_orders",
+      "label": "Create Swell shipments only for orders this app sent to Sendcloud",
+      "type": "boolean",
+      "ui": "toggle",
+      "description": "When on, a parcel for an order this app did not send still stores tracking, but does not create a Swell shipment. Off by default, so a label creates a shipment whenever items are left to ship.",
+      "default": false
+    },
+    {
       "id": "notify_customer",
       "label": "Notify the customer when the shipment is created",
       "type": "boolean",
