@@ -146,6 +146,32 @@ describe("sendcloud-webhook", () => {
     });
   });
 
+  it("finds a resent order by order number and creates a shipment for the new parcel", async () => {
+    const { req, post: postFn } = await setup({
+      payload: {
+        action: "parcel_status_changed",
+        timestamp: 3000,
+        parcel: { ...PARCEL, id: 6002, external_order_id: "order_1-2" },
+      },
+      order: makeOrder({
+        $app: {
+          sendcloud: {
+            sendcloud_order_id: 880,
+            sendcloud_order_suffix: 2,
+            sendcloud_status: "Sent to Sendcloud",
+          },
+        },
+      }),
+    });
+
+    await expect(post(req)).resolves.toEqual({ received: true, order_found: true, updated: true });
+
+    expect(postFn).toHaveBeenCalledWith(
+      "/shipments",
+      expect.objectContaining({ order_id: "order_1", tracking_code: "3SABCD123" }),
+    );
+  });
+
   it("notifies the customer only when that setting is on", async () => {
     const { req, post: postFn } = await setup({
       settings: { ...SETTINGS, notify_customer: true },

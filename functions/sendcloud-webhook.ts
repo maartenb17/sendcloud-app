@@ -89,6 +89,7 @@ export async function post(req: SwellRequest) {
 
   const parcel = payload.parcel;
 
+  // matched by the Swell order number, not by the external order id (<id>, <id>-2, ...)
   if (!parcel.order_number) {
     return { received: true, order_found: false };
   }

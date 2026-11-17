@@ -3,6 +3,7 @@ import {
   SendcloudError,
   WAITING_FOR_INVOICE,
   WAITING_FOR_OVERDUE,
+  canceledParcel,
   getAppData,
   getSendcloudSettings,
   hasActiveLabel,
@@ -153,7 +154,8 @@ async function sendOne(req: SwellRequest, settings: Awaited<ReturnType<typeof ge
     notes.push('test order, sent manually');
   }
 
-  const updating = Boolean(appData.sendcloud_order_id);
+  const replacing = canceledParcel(appData);
+  const updating = Boolean(appData.sendcloud_order_id) && !replacing;
   try {
     const created = await pushOrder(
       req.swell,
@@ -161,11 +163,14 @@ async function sendOne(req: SwellRequest, settings: Awaited<ReturnType<typeof ge
       order,
       (values) => req.appValues(values),
       appData.sendcloud_invoice_id ? { sendcloud_invoice_id: appData.sendcloud_invoice_id } : {},
+      { appId: req.appId || 'sendcloud', newOrderAfterCanceledParcel: true },
     );
     console.log(
-      updating
-        ? `Sendcloud: updated order ${order.number} in Sendcloud (${created?.id})`
-        : `Sendcloud: sent order ${order.number} as Sendcloud order ${created?.id}`,
+      created.replaced
+        ? `Sendcloud: order ${order.number} sent as Sendcloud order ${created.id}; previous order ${created.previousId} left in Sendcloud with a canceled parcel`
+        : updating
+          ? `Sendcloud: updated order ${order.number} in Sendcloud (${created?.id})`
+          : `Sendcloud: sent order ${order.number} as Sendcloud order ${created?.id}`,
     );
     return { status: updating ? 'updated' : 'sent', reason: notes.join('; ') || undefined };
   } catch (err: any) {

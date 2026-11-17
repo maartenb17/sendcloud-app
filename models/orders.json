@@ -7,6 +7,10 @@
       "type": "int",
       "description": "Sendcloud order ID (API v3)"
     },
+    "sendcloud_order_suffix": {
+      "type": "int",
+      "description": "External order id sequence. 1 is the Swell order id; 2 is <id>-2 after a canceled parcel, and so on"
+    },
     "sendcloud_parcel_id": {
       "type": "int",
       "description": "Sendcloud parcel ID"

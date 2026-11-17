@@ -10,6 +10,12 @@
       "readonly": true
     },
     {
+      "id": "sendcloud_order_suffix",
+      "label": "Sendcloud order sequence",
+      "type": "number",
+      "readonly": true
+    },
+    {
       "id": "sendcloud_parcel_id",
       "label": "Parcel ID",
       "type": "number",
@@ -119,7 +125,7 @@
           "label": "Send to Sendcloud",
           "function": "send-to-sendcloud",
           "loading_label": "Sending to Sendcloud…",
-          "hint": "Sends this order, or updates it in Sendcloud when it is already there and has no label. Unpaid and canceled orders are skipped. Waiting and test orders are sent too."
+          "hint": "Sends this order, or updates it in Sendcloud when it is already there and has no label. After a canceled parcel it creates a new Incoming Order. Unpaid and canceled orders are skipped. Waiting and test orders are sent too. An order with an active label is skipped."
         }
       ],
       "tabs": [

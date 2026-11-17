@@ -11,6 +11,16 @@ export function hasActiveLabel(appData: { sendcloud_parcel_id?: unknown; sendclo
   return !CANCELED_STATUSES.includes(Number(appData.sendcloud_status_id));
 }
 
+export function canceledParcel(appData: { sendcloud_parcel_id?: unknown; sendcloud_status_id?: unknown }): boolean {
+  return Boolean(appData?.sendcloud_parcel_id) && !hasActiveLabel(appData);
+}
+
+// suffix 1 is the Swell order id; later resends use <id>-2, <id>-3, ...
+export function externalOrderId(swellOrderId: string, suffix?: number): string {
+  const n = Number(suffix) || 1;
+  return n <= 1 ? String(swellOrderId) : `${swellOrderId}-${Math.floor(n)}`;
+}
+
 export interface SendcloudSettings {
   public_key?: string;
   secret_key?: string;
@@ -106,7 +116,8 @@ export async function upsertOrder(
   return result?.data?.[0];
 }
 
-// removes the order from Incoming Orders; existing shipments are not affected
+// removes the order from Incoming Orders; existing shipments are not affected.
+// sendcloudOrderId is the stored Sendcloud internal id, not the Swell order id.
 export async function deleteOrder(settings: SendcloudSettings, sendcloudOrderId: number): Promise<void> {
   await sendcloudRequest(settings, 'DELETE', `/orders/${sendcloudOrderId}`);
 }
@@ -362,7 +373,7 @@ function expandBundle(item: any): any[] {
 }
 
 // POST /api/v3/orders payload for one Swell order
-export function buildOrder(order: any, settings: SendcloudSettings, weightUnit: string): object {
+export function buildOrder(order: any, settings: SendcloudSettings, weightUnit: string, externalId?: string): object {
   const currency = order.currency;
   const email = order.account?.email;
   const items = shippableItems(order);
@@ -404,7 +415,7 @@ export function buildOrder(order: any, settings: SendcloudSettings, weightUnit: 
   const shippingAddress = formatAddress(order.shipping, email);
 
   return {
-    order_id: String(order.id),
+    order_id: externalId || String(order.id),
     order_number: String(order.number),
     order_details: {
       integration: { id: Number(settings.integration_id) },
@@ -905,13 +916,30 @@ export async function renewalInvoice(swell: SwellAPI, appId: string, order: any)
   };
 }
 
+// fields of the previous parcel; a new Incoming Order must not keep them
+const CLEARED_PARCEL = {
+  sendcloud_parcel_id: null,
+  sendcloud_status_id: null,
+  sendcloud_status_timestamp: null,
+  sendcloud_tracking_number: null,
+  sendcloud_tracking_url: null,
+  sendcloud_carrier: null,
+  sendcloud_shipment_id: null,
+  sendcloud_shipment_status: null,
+  sendcloud_note: null,
+};
+
 export async function pushOrder(
   swell: SwellAPI,
   settings: SendcloudSettings,
   order: any,
   values: (data: Record<string, any>) => any,
   extra: Record<string, any> = {},
-): Promise<{ id?: number }> {
+  options?: { appId?: string; newOrderAfterCanceledParcel?: boolean },
+): Promise<{ id?: number; replaced?: boolean; previousId?: number }> {
+  const appData = getAppData(order, options?.appId || 'sendcloud');
+  const replace = options?.newOrderAfterCanceledParcel === true && canceledParcel(appData);
+  const suffix = replace ? (Number(appData.sendcloud_order_suffix) || 1) + 1 : Number(appData.sendcloud_order_suffix) || 1;
   const weightUnit = await getWeightUnit(swell);
   const withLocale = await withCustomerLocale(swell, order);
   const localized = await withLocalizedNames(swell, withLocale);
@@ -919,15 +947,20 @@ export async function pushOrder(
     settings.show_subscription_plan === true ? await withSubscriptionPlans(swell, localized) : localized;
   const prepared =
     settings.show_bundle_components === true ? await withBundleComponentProducts(swell, named) : named;
-  const created = await upsertOrder(settings, buildOrder(prepared, settings, weightUnit));
+  const created = await upsertOrder(
+    settings,
+    buildOrder(prepared, settings, weightUnit, externalOrderId(order.id, suffix)),
+  );
   await swell.put(
     `/orders/${order.id}`,
     values({
       sendcloud_order_id: created?.id,
       sendcloud_status: 'Sent to Sendcloud',
       sendcloud_error: null,
+      ...(suffix > 1 && { sendcloud_order_suffix: suffix }),
+      ...(replace ? CLEARED_PARCEL : {}),
       ...extra,
     }),
   );
-  return created;
+  return { id: created?.id, replaced: replace, previousId: appData.sendcloud_order_id };
 }

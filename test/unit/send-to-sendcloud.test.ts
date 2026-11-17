@@ -171,8 +171,8 @@ describe("send-to-sendcloud", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("sends again after the label was canceled and keeps the parcel fields", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669, order_id: ORDER_ID }] }));
+  it("sends a new Sendcloud order after the label was canceled and clears the parcel fields", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 880 }] }));
     const canceled = order({
       $app: {
         sendcloud: {
@@ -180,6 +180,9 @@ describe("send-to-sendcloud", () => {
           sendcloud_parcel_id: 5001,
           sendcloud_status_id: 2000,
           sendcloud_tracking_number: "3SOLD",
+          sendcloud_carrier: "postnl",
+          sendcloud_shipment_id: "ship_1",
+          sendcloud_note: "old",
         },
       },
     });
@@ -188,13 +191,43 @@ describe("send-to-sendcloud", () => {
     const result = await handler(req);
 
     const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
-    expect(body).toEqual([expect.objectContaining({ order_id: ORDER_ID, order_number: "100003" })]);
-    expect(result?.message).toContain("Updated 1 order in Sendcloud");
+    expect(body).toEqual([expect.objectContaining({ order_id: `${ORDER_ID}-2`, order_number: "100003" })]);
+    expect(result?.message).toContain("Sent 1 order to Sendcloud");
+    expect(logs.join("\n")).toContain("previous order 669 left in Sendcloud");
+    expect(logs.join("\n")).toContain("Sendcloud order 880");
     const values = put.mock.calls.at(-1)?.[1].$app.sendcloud;
-    expect(values.sendcloud_order_id).toBe(669);
-    expect(values.sendcloud_parcel_id).toBeUndefined();
-    expect(values.sendcloud_status_id).toBeUndefined();
-    expect(values.sendcloud_tracking_number).toBeUndefined();
+    expect(values.sendcloud_order_id).toBe(880);
+    expect(values.sendcloud_order_suffix).toBe(2);
+    expect(values.sendcloud_status).toBe("Sent to Sendcloud");
+    expect(values.sendcloud_parcel_id).toBeNull();
+    expect(values.sendcloud_status_id).toBeNull();
+    expect(values.sendcloud_tracking_number).toBeNull();
+    expect(values.sendcloud_carrier).toBeNull();
+    expect(values.sendcloud_shipment_id).toBeNull();
+    expect(values.sendcloud_note).toBeNull();
+  });
+
+  it("uses suffix 3 when the previous resend was also canceled", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 881 }] }));
+    const canceled = order({
+      $app: {
+        sendcloud: {
+          sendcloud_order_id: 880,
+          sendcloud_order_suffix: 2,
+          sendcloud_parcel_id: 5002,
+          sendcloud_status_id: 2000,
+        },
+      },
+    });
+    const { req, put } = actionRequest([canceled]);
+
+    await handler(req);
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body[0].order_id).toBe(`${ORDER_ID}-3`);
+    expect(body[0].order_number).toBe("100003");
+    expect(put.mock.calls.at(-1)?.[1].$app.sendcloud.sendcloud_order_suffix).toBe(3);
+    expect(put.mock.calls.at(-1)?.[1].$app.sendcloud.sendcloud_order_id).toBe(881);
   });
 
   it("refuses a bulk selection of more than 10 orders", async () => {

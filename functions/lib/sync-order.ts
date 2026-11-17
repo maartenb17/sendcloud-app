@@ -3,8 +3,8 @@ import {
   SendcloudSettings,
   WAITING_FOR_INVOICE,
   WAITING_FOR_OVERDUE,
+  canceledParcel,
   getAppData,
-  hasActiveLabel,
   isCanceledOrder,
   isTestOrder,
   pushOrder,
@@ -38,11 +38,8 @@ export async function syncOrder(
     console.log(`Sendcloud: order ${order.number} is a test order, skipping`);
     return { status: 'skipped', reason: 'order is a test order' };
   }
-  // a canceled parcel may be sent again; an order already in Sendcloud, or an active label, may not
-  const resendCanceled =
-    options?.resendCanceledParcel === true &&
-    Boolean(appData.sendcloud_parcel_id) &&
-    !hasActiveLabel(appData);
+  // a canceled parcel is sent as a new Incoming Order; an order already in Sendcloud, or an active label, is not
+  const resendCanceled = options?.resendCanceledParcel === true && canceledParcel(appData);
   if (appData.sendcloud_order_id && !resendCanceled) {
     console.log(`Sendcloud: order ${order.number} already sent as Sendcloud order ${appData.sendcloud_order_id}`);
     return { status: 'skipped', reason: 'already in Sendcloud' };
@@ -97,8 +94,13 @@ export async function syncOrder(
       order,
       appValues,
       invoiceId ? { sendcloud_invoice_id: invoiceId } : {},
+      { appId, newOrderAfterCanceledParcel: options?.resendCanceledParcel === true },
     );
-    console.log(`Sendcloud: sent order ${order.number} as Sendcloud order ${created?.id}`);
+    console.log(
+      created.replaced
+        ? `Sendcloud: order ${order.number} sent as Sendcloud order ${created.id}; previous order ${created.previousId} left in Sendcloud with a canceled parcel`
+        : `Sendcloud: sent order ${order.number} as Sendcloud order ${created?.id}`,
+    );
     return { status: 'sent' };
   } catch (err: any) {
     const message = err?.message || String(err);
