@@ -797,40 +797,82 @@ describe("order-events", () => {
     expect(put.mock.calls[0][1].$app.sendcloud.sendcloud_order_id).toBeUndefined();
   });
 
-  it("leaves the order when a manual shipment still has something to ship", async () => {
-    const { req, put } = shipmentRequest(makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } }));
+  it("updates the Sendcloud order to the quantity still to ship", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const item = makeOrder().items[0];
+    const { req, put } = shipmentRequest(
+      makeOrder({
+        $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_order_suffix: 2 } },
+        items: [{ ...item, quantity: 2, quantity_shipment_deliverable: 1, price_total: 39.9 }],
+      }),
+    );
 
     await handler(req);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://panel.sendcloud.sc/api/v3/orders");
+    expect(init.method).toBe("POST");
+    const sent = JSON.parse(String(init.body))[0];
+    expect(sent.order_id).toBe("order_1-2");
+    expect(sent.order_details.order_items).toEqual([
+      expect.objectContaining({ item_id: "item_1", quantity: 1, total_price: { value: 19.95, currency: "EUR" } }),
+    ]);
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("leaves the order when one bundle component is still to ship", async () => {
+  it("updates a bundle to the component quantity still to ship", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
     const order = makeOrder({
       $app: { sendcloud: { sendcloud_order_id: 669 } },
       items: [
         {
           id: "pack",
           delivery: "shipment",
+          quantity: 1,
+          price_total: 20,
+          product_id: "bundle_prod",
+          product: { name: "Bundle" },
           bundle_items: [
-            { id: "done", product_id: "p1", quantity_shipment_deliverable: 0 },
-            { id: "open", product_id: "p2", quantity_shipment_deliverable: 1 },
+            {
+              id: "pouch",
+              product_id: "pouch_prod",
+              quantity: 4,
+              quantity_total: 4,
+              quantity_shipment_deliverable: 2,
+              price: 5,
+              product: { name: "Pouch", sku: "POUCH" },
+            },
+            {
+              id: "card",
+              product_id: "card_prod",
+              quantity: 1,
+              quantity_total: 1,
+              quantity_shipment_deliverable: 0,
+              product: { name: "Card" },
+            },
           ],
         },
       ],
     });
-    const { req, put } = shipmentRequest(order);
+    const { req, put } = shipmentRequest(order, {}, { ...OUTSIDE, show_bundle_components: true });
 
     await handler(req);
 
-    expect(fetchMock).not.toHaveBeenCalled();
+    const sent = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body))[0];
+    expect(sent.order_id).toBe("order_1");
+    expect(sent.order_details.order_items).toEqual([
+      expect.objectContaining({ item_id: "pouch", quantity: 2, name: "Bundle → Pouch" }),
+    ]);
     expect(put).not.toHaveBeenCalled();
   });
 
   it("leaves the order when a parcel already exists", async () => {
+    const item = makeOrder().items[0];
     const { req, put } = shipmentRequest(
-      finishedOrder({ $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_parcel_id: 5001 } } }),
+      makeOrder({
+        $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_parcel_id: 5001 } },
+        items: [{ ...item, quantity: 4, quantity_shipment_deliverable: 2 }],
+      }),
     );
 
     await handler(req);

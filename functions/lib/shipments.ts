@@ -84,6 +84,71 @@ export function deliverableItems(order: any) {
   return lines;
 }
 
+function originalComponentQuantity(child: any, parent: any): number {
+  const total = Number(child?.quantity_total);
+  if (Number.isFinite(total) && total > 0) return total;
+  const each = Number(child?.quantity) || 0;
+  const bundles = Number(parent?.quantity) || 1;
+  return each * bundles;
+}
+
+function scaleAmount(value: unknown, ratio: number, decimals: number): number | undefined {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  const factor = 10 ** decimals;
+  return Math.round(n * ratio * factor) / factor;
+}
+
+// the same order, with each line's quantity reduced to what is still to ship.
+// a bundle keeps one row per component that still has a quantity.
+export function orderWithRemainingQuantities(order: any): any {
+  const byParent = new Map<string, { bundle_item_id?: string; quantity: number }[]>();
+  for (const line of deliverableItems(order)) {
+    const list = byParent.get(line.order_item_id) || [];
+    list.push(line);
+    byParent.set(line.order_item_id, list);
+  }
+
+  const items = [];
+  for (const item of order?.items || []) {
+    const lines = item?.id ? byParent.get(item.id) : undefined;
+    if (!lines?.length) continue;
+    const componentLines = lines.filter((line) => line.bundle_item_id);
+    if (componentLines.length) {
+      const qtyByChild = new Map(componentLines.map((line) => [line.bundle_item_id, line.quantity]));
+      const bundleItems = (item.bundle_items || []).flatMap((child: any) => {
+        const quantity = qtyByChild.get(child?.id) || 0;
+        if (quantity <= 0) return [];
+        const original = originalComponentQuantity(child, item);
+        const ratio = original > 0 ? quantity / original : 1;
+        return [
+          {
+            ...child,
+            quantity,
+            quantity_total: quantity,
+            quantity_shipment_deliverable: quantity,
+            ...(child?.shipment_weight != null ? { shipment_weight: scaleAmount(child.shipment_weight, ratio, 3) } : {}),
+          },
+        ];
+      });
+      if (!bundleItems.length) continue;
+      items.push({ ...item, bundle_items: bundleItems });
+      continue;
+    }
+    const quantity = lines[0].quantity;
+    const original = Number(item.quantity) || quantity;
+    const ratio = original > 0 ? quantity / original : 1;
+    items.push({
+      ...item,
+      quantity,
+      quantity_shipment_deliverable: quantity,
+      price_total: scaleAmount(item.price_total, ratio, 2),
+      ...(item.shipment_weight != null ? { shipment_weight: scaleAmount(item.shipment_weight, ratio, 3) } : {}),
+    });
+  }
+  return { ...order, items };
+}
+
 // active Swell shipments of the order with this tracking number, oldest first
 async function findShipmentsByTracking(swell: SwellAPI, orderId: string, trackingNumber?: string): Promise<any[]> {
   if (!trackingNumber) return [];

@@ -121,7 +121,7 @@
       "label": "Remove the order from Sendcloud when it is shipped outside Sendcloud",
       "type": "boolean",
       "ui": "toggle",
-      "description": "When a Swell shipment this app did not create leaves nothing left to ship, and the order has no Sendcloud parcel yet, remove it from Incoming Orders. Off by default.",
+      "description": "When a Swell shipment this app did not create leaves nothing left to ship, and the order has no Sendcloud parcel yet, remove it from Incoming Orders. A partial shipment updates that order to the quantities still to ship. Off by default.",
       "default": false
     },
     {

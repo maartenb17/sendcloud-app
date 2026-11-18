@@ -6,10 +6,13 @@ import {
   SendcloudError,
   WAITING_FOR_INVOICE,
   WAITING_FOR_OVERDUE,
+  buildOrder,
   deleteOrder,
   earlierInvoiceInArrears,
+  externalOrderId,
   getAppData,
   getSendcloudSettings,
+  getWeightUnit,
   hasCredentials,
   hasSeparateOrderSchedule,
   isCanceledOrder,
@@ -20,8 +23,13 @@ import {
   pushOrder,
   shippableItems,
   subscriptionInArrears,
+  upsertOrder,
+  withBundleComponentProducts,
+  withCustomerLocale,
+  withLocalizedNames,
+  withSubscriptionPlans,
 } from './lib/sendcloud';
-import { deliverableItems } from './lib/shipments';
+import { deliverableItems, orderWithRemainingQuantities } from './lib/shipments';
 import { syncOrder } from './lib/sync-order';
 
 export const config: SwellConfig = {
@@ -352,6 +360,7 @@ async function handleShipmentCreated(req: SwellRequest) {
     return;
   }
   if (deliverableItems(order).length) {
+    await updateRemainingOrder(req, settings, order, appData);
     return;
   }
 
@@ -374,6 +383,30 @@ async function handleShipmentCreated(req: SwellRequest) {
       sendcloud_error: null,
     }),
   );
+}
+
+// same Incoming Order: remaining quantities only, bundles counted per component
+async function updateRemainingOrder(req: SwellRequest, settings: any, order: any, appData: Record<string, any>) {
+  const { swell } = req;
+  try {
+    const weightUnit = await getWeightUnit(swell);
+    const withLocale = await withCustomerLocale(swell, order);
+    const localized = await withLocalizedNames(swell, withLocale);
+    const named = settings.show_subscription_plan === true ? await withSubscriptionPlans(swell, localized) : localized;
+    const prepared = settings.show_bundle_components === true ? await withBundleComponentProducts(swell, named) : named;
+    const suffix = Number(appData.sendcloud_order_suffix) || 1;
+    await upsertOrder(
+      settings,
+      buildOrder(orderWithRemainingQuantities(prepared), settings, weightUnit, externalOrderId(order.id, suffix)),
+    );
+    console.log(`Sendcloud: updated order ${order.number} to the quantities still to ship`);
+  } catch (err: any) {
+    const message = `Couldn't update the order shipped outside Sendcloud: ${err?.message || String(err)}`;
+    console.error(`Sendcloud: ${message}`);
+    await swell.put(`/orders/${order.id}`, req.appValues({ sendcloud_error: message }));
+    if (err instanceof SendcloudError && err.status < 500) return;
+    throw err;
+  }
 }
 
 async function loadInvoice(swell: SwellAPI, data: any): Promise<any | null> {
