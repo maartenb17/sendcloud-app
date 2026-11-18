@@ -267,10 +267,8 @@ describe("sendcloud-webhook", () => {
     expect(body.tracking_code).toBe("3SABCD123");
   });
 
-  it("creates a shipment for an order this app did not send when that limit is off", async () => {
-    const { req, post: postFn } = await setup({
-      settings: { ...SETTINGS, only_shipments_for_sent_orders: false },
-    });
+  it("creates a shipment for an order this app did not send", async () => {
+    const { req, post: postFn } = await setup();
 
     await expect(post(req)).resolves.toEqual({ received: true, order_found: true, updated: true });
 
@@ -278,29 +276,6 @@ describe("sendcloud-webhook", () => {
       "/shipments",
       expect.objectContaining({ order_id: "order_1", $validate_items: true, tracking_code: "3SABCD123" }),
     );
-  });
-
-  it("stores tracking without a shipment when the order was not sent by this app", async () => {
-    const { req, put, post: postFn } = await setup({
-      settings: { ...SETTINGS, only_shipments_for_sent_orders: true },
-    });
-
-    await expect(post(req)).resolves.toEqual({ received: true, order_found: true, updated: true });
-
-    expect(postFn).not.toHaveBeenCalled();
-    expect(put).toHaveBeenCalledWith("/orders/order_1", {
-      $app: {
-        sendcloud: {
-          sendcloud_parcel_id: 5001,
-          sendcloud_status_id: 1000,
-          sendcloud_status: "Ready to send",
-          sendcloud_tracking_number: "3SABCD123",
-          sendcloud_tracking_url: "https://tracking.example/3SABCD123",
-          sendcloud_carrier: "postnl",
-          sendcloud_status_timestamp: 1000,
-        },
-      },
-    });
   });
 
   it("stores tracking without a shipment when nothing is left to ship", async () => {

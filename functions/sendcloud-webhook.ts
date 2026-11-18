@@ -146,11 +146,8 @@ export async function post(req: SwellRequest) {
     !NO_LABEL_STATUSES.includes(statusId) &&
     !isCanceled;
 
-  // off: a label creates a shipment whenever items are left (upstream). on: only orders this app sent
-  const sentByApp = Boolean(appData.sendcloud_order_id);
-  const onlySentOrders = settings.only_shipments_for_sent_orders === true;
   let pendingError: ShipmentPending | undefined;
-  if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id && (!onlySentOrders || sentByApp)) {
+  if (settings.create_fulfillment !== false && hasLabel && !appData.sendcloud_shipment_id) {
     try {
       values.sendcloud_shipment_id = await createSwellShipment(swell, order, parcel, {
         notify: settings.notify_customer === true,
@@ -167,8 +164,6 @@ export async function post(req: SwellRequest) {
         throw err;
       }
     }
-  } else if (onlySentOrders && hasLabel && !sentByApp) {
-    console.log(`Sendcloud: order ${order.number} was not sent by this app, not creating a shipment`);
   }
 
   if (isCanceled) {
