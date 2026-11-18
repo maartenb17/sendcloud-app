@@ -82,6 +82,65 @@ describe("check-and-send", () => {
     vi.restoreAllMocks();
   });
 
+  it("skips an unpaid order on the same order and billing cycle", async () => {
+    const order = renewal({ paid: false, grand_total: 15, number: "100641" });
+    const equal = {
+      billing_schedule: { interval: "daily", interval_count: 3 },
+      order_schedule: null,
+    };
+    const { req, put } = requestFor(
+      [order],
+      { ...SETTINGS, hold_separate_order_schedule: true },
+      holdGet(order, [], equal),
+    );
+
+    await expect(handler(req)).rejects.toThrow("Skipped: 100641: not paid.");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100641 is not paid, skipping");
+  });
+
+  it("sends a paid order on the same order and billing cycle", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 881 }] }));
+    const order = renewal({ paid: true, grand_total: 15, number: "100642" });
+    const equal = {
+      billing_schedule: { interval: "daily", interval_count: 3 },
+      order_schedule: null,
+    };
+    const { req } = requestFor(
+      [order],
+      { ...SETTINGS, hold_separate_order_schedule: true },
+      holdGet(order, [], equal),
+    );
+
+    const result = await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ message: expect.stringContaining("Sent 1 order to Sendcloud: 100642.") });
+  });
+
+  it("sends a zero-total order that Swell marks paid", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 882 }] }));
+    const order = makeOrder({ id: ORDER_ID, number: "100643", paid: true, grand_total: 0 });
+    const { req } = requestFor([order], SETTINGS, plainGet([order]));
+
+    const result = await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ message: expect.stringContaining("Sent 1 order to Sendcloud: 100643.") });
+  });
+
+  it("sends an unpaid order when the setting is order submitted", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 883 }] }));
+    const order = renewal({ paid: false, grand_total: 15, number: "100644" });
+    const { req } = requestFor([order], { ...SETTINGS, sync_on: "submitted" }, plainGet([order]));
+
+    const result = await handler(req);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ message: expect.stringContaining("Sent 1 order to Sendcloud: 100644.") });
+  });
+
   it("sends an order that may go", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
     const order = makeOrder({ id: ORDER_ID });

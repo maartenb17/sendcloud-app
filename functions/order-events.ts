@@ -14,6 +14,7 @@ import {
   isSubscriptionCanceled,
   isTestOrder,
   orderClosestToInvoice,
+  paymentAllowsSend,
   pushOrder,
   shippableItems,
   subscriptionInArrears,
@@ -171,6 +172,10 @@ async function handleInvoice(req: SwellRequest) {
     console.log(`Sendcloud: order ${order.number} is waiting for invoice payment`);
     return;
   }
+  if (!paymentAllowsSend(settings, order)) {
+    console.log(`Sendcloud: order ${order.number} is not paid, skipping`);
+    return;
+  }
   if (!shippableItems(order).length || !order.shipping?.address1 || !order.shipping?.country) {
     return;
   }
@@ -254,6 +259,10 @@ async function settleHeldOrder(req: SwellRequest, settings: Awaited<ReturnType<t
   }
   if (isSubscriptionCanceled(subscription)) {
     console.log(`Sendcloud: order ${order.number} subscription is canceled, skipping`);
+    return;
+  }
+  if (!paymentAllowsSend(settings, order)) {
+    console.log(`Sendcloud: order ${order.number} is not paid, skipping`);
     return;
   }
 

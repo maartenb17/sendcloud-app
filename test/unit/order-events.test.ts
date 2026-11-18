@@ -656,6 +656,67 @@ describe("order-events", () => {
     );
   });
 
+  it("does not release an unpaid order when its invoice is paid", async () => {
+    const order = renewalOrder({
+      paid: false,
+      grand_total: 15,
+      $app: { sendcloud: { sendcloud_status: "Waiting for invoice payment", sendcloud_invoice_id: "inv_1" } },
+    });
+    const put = vi.fn().mockResolvedValue({});
+    const req = createMockRequest({
+      data: { id: "inv_1", $event: { type: "invoice.payment_succeeded" } } as any,
+      appId: "sendcloud",
+      swell: {
+        settings: vi.fn().mockResolvedValue({ sendcloud: { ...SETTINGS, hold_separate_order_schedule: true } }),
+        get: vi.fn(async (url: string) => {
+          if (url === "/invoices/inv_1") {
+            return { id: "inv_1", status: "paid", subscription_id: "sub_1", date_created: order.date_created };
+          }
+          if (url === "/subscriptions/sub_1") return { ...SEPARATE, status: "active" };
+          if (url === "/invoices") return { results: [{ id: "inv_1", status: "paid", date_created: order.date_created }] };
+          if (url === "/orders") return { results: [order] };
+          return null;
+        }),
+        put,
+      },
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100996 is not paid, skipping");
+  });
+
+  it("does not release an unpaid order when the subscription is updated", async () => {
+    const order = renewalOrder({
+      paid: false,
+      grand_total: 15,
+      $app: { sendcloud: { sendcloud_status: "Waiting for invoice payment", sendcloud_invoice_id: "inv_1" } },
+    });
+    const put = vi.fn().mockResolvedValue({});
+    const req = createMockRequest({
+      data: { id: "sub_1", $event: { type: "subscription.updated" } } as any,
+      appId: "sendcloud",
+      swell: {
+        settings: vi.fn().mockResolvedValue({ sendcloud: { ...SETTINGS, hold_separate_order_schedule: true } }),
+        get: vi.fn(async (url: string) => {
+          if (url === "/subscriptions/sub_1") return { ...SEPARATE, status: "active" };
+          if (url === "/invoices") return { results: [{ id: "inv_1", status: "paid", date_created: order.date_created }] };
+          if (url === "/orders") return { results: [order] };
+          return null;
+        }),
+        put,
+      },
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(logs).toContain("Sendcloud: order 100996 is not paid, skipping");
+  });
+
   it("does not send a shipment when the subscription is canceled", async () => {
     const paid = renewalOrder();
     const { req, put } = setup({

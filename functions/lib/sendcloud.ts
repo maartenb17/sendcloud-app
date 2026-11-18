@@ -507,6 +507,12 @@ export function earlierInvoiceInArrears(ownInvoice: any, invoices: any[]): boole
   });
 }
 
+// "Order is paid" sends only when Swell has marked the order paid, including a €0 order.
+// "Order is submitted" does not wait for payment.
+export function paymentAllowsSend(settings: SendcloudSettings, order: { paid?: boolean }): boolean {
+  return settings.sync_on === 'submitted' || order?.paid === true;
+}
+
 // true when the subscription ships on a different cadence than it bills.
 // an empty order_schedule means orders follow the billing schedule.
 export function hasSeparateOrderSchedule(subscription: any): boolean {

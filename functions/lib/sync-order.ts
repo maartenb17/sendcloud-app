@@ -7,6 +7,7 @@ import {
   getAppData,
   isCanceledOrder,
   isTestOrder,
+  paymentAllowsSend,
   pushOrder,
   renewalInvoice,
   shippableItems,
@@ -19,8 +20,9 @@ export interface SyncOutcome {
   error?: unknown;
 }
 
-// same decision as order.paid: skip a test or canceled order, hold a separate
-// order schedule until its invoice is paid and nothing is overdue, otherwise send.
+// same decision as the automatic send: skip a test or canceled order, and when
+// the setting is "Order is paid" skip an unpaid order without changing it.
+// hold a separate order schedule until its invoice is paid and nothing is overdue.
 export async function syncOrder(
   swell: SwellAPI,
   settings: SendcloudSettings,
@@ -43,6 +45,10 @@ export async function syncOrder(
   if (appData.sendcloud_order_id && !resendCanceled) {
     console.log(`Sendcloud: order ${order.number} already sent as Sendcloud order ${appData.sendcloud_order_id}`);
     return { status: 'skipped', reason: 'already in Sendcloud' };
+  }
+  if (!paymentAllowsSend(settings, order)) {
+    console.log(`Sendcloud: order ${order.number} is not paid, skipping`);
+    return { status: 'skipped', reason: 'not paid' };
   }
   if (!shippableItems(order).length) {
     console.log(`Sendcloud: order ${order.number} has no shippable items, skipping`);
