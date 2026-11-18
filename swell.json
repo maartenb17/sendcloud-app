@@ -1,9 +1,9 @@
 {
 	"description": "Send orders to Sendcloud",
-	"id": "sendcloud",
-	"name": "Sendcloud",
+	"id": "smpl_sendcloud",
+	"name": "Sendcloud (SMPL)",
 	"type": "integration",
-	"version": "1.0.7",
+	"version": "1.0.5",
 	"support_email": "support@swell.is",
 	"documentation_url": "https://developers.swell.is/app-guides/sendcloud",
 	"permissions": [],
