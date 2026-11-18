@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import handler from "../../functions/order-events";
+import { sendcloudSyncHash } from "../../functions/lib/shipments";
 import { createMockRequest } from "../helpers/mock-request";
 import { SETTINGS, jsonResponse, makeOrder, routeGet } from "../helpers/fixtures";
 
@@ -25,6 +26,10 @@ const logs: string[] = [];
 
 describe("order-events", () => {
   let fetchMock: ReturnType<typeof vi.spyOn>;
+
+  function postedOrder() {
+    return JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body))[0];
+  }
 
   beforeEach(() => {
     logs.length = 0;
@@ -62,6 +67,7 @@ describe("order-events", () => {
           sendcloud_order_id: 669,
           sendcloud_status: "Sent to Sendcloud",
           sendcloud_error: null,
+          sendcloud_sync_hash: await sendcloudSyncHash(makeOrder()),
         },
       },
     });
@@ -316,6 +322,7 @@ describe("order-events", () => {
           sendcloud_status: "Sent to Sendcloud",
           sendcloud_error: null,
           sendcloud_invoice_id: "inv_1",
+          sendcloud_sync_hash: await sendcloudSyncHash(order),
         },
       },
     });
@@ -817,7 +824,19 @@ describe("order-events", () => {
     expect(sent.order_details.order_items).toEqual([
       expect.objectContaining({ item_id: "item_1", quantity: 1, total_price: { value: 19.95, currency: "EUR" } }),
     ]);
-    expect(put).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_sync_hash: await sendcloudSyncHash(
+            makeOrder({
+              $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_order_suffix: 2 } },
+              items: [{ ...item, quantity: 2, quantity_shipment_deliverable: 1, price_total: 39.9 }],
+            }),
+          ),
+          sendcloud_error: null,
+        },
+      },
+    });
   });
 
   it("updates a bundle to the component quantity still to ship", async () => {
@@ -854,7 +873,7 @@ describe("order-events", () => {
         },
       ],
     });
-    const { req, put } = shipmentRequest(order, {}, { ...OUTSIDE, show_bundle_components: true });
+    const { req, put } = shipmentRequest(order, {}, { ...SYNC, show_bundle_components: true });
 
     await handler(req);
 
@@ -863,7 +882,9 @@ describe("order-events", () => {
     expect(sent.order_details.order_items).toEqual([
       expect.objectContaining({ item_id: "pouch", quantity: 2, name: "Bundle → Pouch" }),
     ]);
-    expect(put).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: { sendcloud: { sendcloud_sync_hash: await sendcloudSyncHash(order), sendcloud_error: null } },
+    });
   });
 
   it("leaves the order when a parcel already exists", async () => {
@@ -878,7 +899,13 @@ describe("order-events", () => {
     await handler(req);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_note: "Order changed after the label was created; update the parcel in Sendcloud.",
+        },
+      },
+    });
   });
 
   it("leaves the order when it was never sent to Sendcloud", async () => {
@@ -927,9 +954,205 @@ describe("order-events", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
   });
+
+  it("adds an item to the Sendcloud order", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const before = makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } });
+    const added = lineItem({
+      id: "item_2",
+      product_id: "prod_2",
+      quantity: 1,
+      quantity_shipment_deliverable: 1,
+      price: 5,
+      price_total: 5,
+      shipment_weight: 1,
+      product: { name: "Cup", sku: "CUP" },
+    });
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_sync_hash: await sendcloudSyncHash(before) } },
+      items: [...before.items, added],
+    });
+    const { req, put } = orderUpdatedRequest(order);
+
+    await handler(req);
+
+    const sent = postedOrder();
+    expect(sent.order_id).toBe("order_1");
+    expect(sent.order_details.order_items.map((item: any) => [item.item_id, item.quantity])).toEqual([
+      ["item_1", 2],
+      ["item_2", 1],
+    ]);
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: { sendcloud: { sendcloud_sync_hash: await sendcloudSyncHash(order), sendcloud_error: null } },
+    });
+  });
+
+  it("removes an item from the Sendcloud order", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const before = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669 } },
+      items: [...makeOrder().items, lineItem({ id: "item_2", product_id: "prod_2", quantity: 1, quantity_shipment_deliverable: 1, price: 5, price_total: 5, product: { name: "Cup" } })],
+    });
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_sync_hash: await sendcloudSyncHash(before) } },
+    });
+    const { req } = orderUpdatedRequest(order);
+
+    await handler(req);
+
+    const sent = postedOrder();
+    expect(sent.order_details.order_items.map((item: any) => [item.item_id, item.quantity])).toEqual([["item_1", 2]]);
+  });
+
+  it("raises the quantity on the Sendcloud order", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const before = makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } });
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_sync_hash: await sendcloudSyncHash(before) } },
+      items: [lineItem({ quantity: 3, quantity_shipment_deliverable: 3, price_total: 59.85 })],
+    });
+    const { req } = orderUpdatedRequest(order);
+
+    await handler(req);
+
+    expect(postedOrder().order_details.order_items[0].quantity).toBe(3);
+  });
+
+  it("lowers the quantity on the Sendcloud order", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const before = makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } });
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_sync_hash: await sendcloudSyncHash(before) } },
+      items: [lineItem({ quantity: 1, quantity_shipment_deliverable: 1, price_total: 19.95 })],
+    });
+    const { req } = orderUpdatedRequest(order);
+
+    await handler(req);
+
+    expect(postedOrder().order_details.order_items[0].quantity).toBe(1);
+  });
+
+  it("updates the shipping address on the Sendcloud order", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const before = makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } });
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_sync_hash: await sendcloudSyncHash(before) } },
+      shipping: { ...before.shipping, address1: "Kerkstraat 8", city: "Utrecht", zip: "3511 AB" },
+    });
+    const { req } = orderUpdatedRequest(order);
+
+    await handler(req);
+
+    expect(postedOrder().shipping_address).toMatchObject({ address_line_1: "Kerkstraat", house_number: "8", city: "Utrecht" });
+  });
+
+  it("removes the Sendcloud order when nothing is left to ship", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const before = makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } });
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_sync_hash: await sendcloudSyncHash(before) } },
+      items: [lineItem({ quantity_shipment_deliverable: 0 })],
+    });
+    const { req, put } = orderUpdatedRequest(order);
+
+    await handler(req);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://panel.sendcloud.sc/api/v3/orders/669");
+    expect(init.method).toBe("DELETE");
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: { sendcloud: { sendcloud_status: "Removed from Sendcloud", sendcloud_error: null } },
+    });
+    expect(put.mock.calls[0][1].$app.sendcloud.sendcloud_order_id).toBeUndefined();
+  });
+
+  it("does not call Sendcloud when the lines and address are unchanged", async () => {
+    const before = makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } });
+    const order = makeOrder({
+      comments: "gift wrap",
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_sync_hash: await sendcloudSyncHash(before) } },
+    });
+    const { req, put } = orderUpdatedRequest(order, { data: { comments: "gift wrap" } });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("does not call Sendcloud for the app's own order write", async () => {
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669 } },
+      shipping: { ...makeOrder().shipping, city: "Utrecht" },
+    });
+    const { req, put } = orderUpdatedRequest(order, {
+      app_id: "sendcloud",
+      data: { $app: { sendcloud: { sendcloud_sync_hash: "abc" } } },
+    });
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("notes a change once when a label already exists", async () => {
+    const before = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_parcel_id: 5001, sendcloud_status_id: 1000 } },
+    });
+    const changed = {
+      $app: {
+        sendcloud: {
+          sendcloud_order_id: 669,
+          sendcloud_parcel_id: 5001,
+          sendcloud_status_id: 1000,
+          sendcloud_sync_hash: await sendcloudSyncHash(before),
+        },
+      },
+      shipping: { ...before.shipping, city: "Utrecht" },
+    };
+    const first = orderUpdatedRequest(makeOrder(changed));
+
+    await handler(first.req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(first.put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: { sendcloud: { sendcloud_note: LABEL_NOTE } },
+    });
+
+    const second = orderUpdatedRequest(
+      makeOrder({
+        ...changed,
+        $app: { sendcloud: { ...changed.$app.sendcloud, sendcloud_note: LABEL_NOTE } },
+      }),
+    );
+    await handler(second.req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(second.put).not.toHaveBeenCalled();
+  });
+
+  it("updates a bundle to the component quantity still to ship when the order changes", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ data: [{ id: 669 }] }));
+    const full = bundleOrder(4);
+    const order = bundleOrder(2, await sendcloudSyncHash(full));
+    const { req, put } = orderUpdatedRequest(order, {}, { ...SYNC, show_bundle_components: true });
+
+    await handler(req);
+
+    const sent = postedOrder();
+    expect(sent.order_id).toBe("order_1");
+    expect(sent.order_details.order_items).toEqual([
+      expect.objectContaining({ item_id: "pouch", quantity: 2, name: "Bundle → Pouch" }),
+    ]);
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: { sendcloud: { sendcloud_sync_hash: await sendcloudSyncHash(order), sendcloud_error: null } },
+    });
+  });
 });
 
-const OUTSIDE = { ...SETTINGS, remove_when_shipped_outside: true };
+const SYNC = { ...SETTINGS, sync_with_swell: true };
+const LABEL_NOTE = "Order changed after the label was created; update the parcel in Sendcloud.";
 
 function finishedOrder(overrides: Record<string, any> = {}) {
   const order = makeOrder({
@@ -943,10 +1166,66 @@ function finishedOrder(overrides: Record<string, any> = {}) {
   return order;
 }
 
+function lineItem(overrides: Record<string, any> = {}) {
+  return { ...makeOrder().items[0], ...overrides };
+}
+
+function bundleOrder(pouchLeft: number, hash?: string) {
+  return makeOrder({
+    $app: { sendcloud: { sendcloud_order_id: 669, ...(hash ? { sendcloud_sync_hash: hash } : {}) } },
+    items: [
+      {
+        id: "pack",
+        delivery: "shipment",
+        quantity: 1,
+        price_total: 20,
+        product_id: "bundle_prod",
+        product: { name: "Bundle" },
+        bundle_items: [
+          {
+            id: "pouch",
+            product_id: "pouch_prod",
+            quantity: 4,
+            quantity_total: 4,
+            quantity_shipment_deliverable: pouchLeft,
+            price: 5,
+            product: { name: "Pouch", sku: "POUCH" },
+          },
+          {
+            id: "card",
+            product_id: "card_prod",
+            quantity: 1,
+            quantity_total: 1,
+            quantity_shipment_deliverable: pouchLeft === 4 ? 1 : 0,
+            product: { name: "Card" },
+          },
+        ],
+      },
+    ],
+  });
+}
+
+function orderUpdatedRequest(order: any, event: Record<string, any> = {}, settings: Record<string, any> = SYNC) {
+  const put = vi.fn().mockResolvedValue({});
+  const req = createMockRequest({
+    data: {
+      id: "order_1",
+      $event: { type: "order.updated", ...event },
+    } as any,
+    appId: "sendcloud",
+    swell: {
+      settings: vi.fn().mockResolvedValue({ sendcloud: settings }),
+      get: routeGet({ "/orders/order_1": order, "/settings/shipments": { weight_unit: "kg" } }),
+      put,
+    },
+  });
+  return { req, put };
+}
+
 function shipmentRequest(
   order: any,
   shipment: Record<string, any> = {},
-  settings: Record<string, any> = OUTSIDE,
+  settings: Record<string, any> = SYNC,
 ) {
   const put = vi.fn().mockResolvedValue({});
   const req = createMockRequest({

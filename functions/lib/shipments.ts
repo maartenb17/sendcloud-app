@@ -149,6 +149,37 @@ export function orderWithRemainingQuantities(order: any): any {
   return { ...order, items };
 }
 
+// hash of the lines, quantities, shipping address and name Sendcloud was given
+export async function sendcloudSyncHash(order: any): Promise<string> {
+  const items = deliverableItems(order)
+    .map((line) => ({
+      order_item_id: String(line.order_item_id || ''),
+      bundle_item_id: line.bundle_item_id ? String(line.bundle_item_id) : '',
+      product_id: line.product_id ? String(line.product_id) : '',
+      variant_id: line.variant_id ? String(line.variant_id) : '',
+      quantity: line.quantity,
+    }))
+    .sort((a, b) =>
+      `${a.order_item_id}\0${a.bundle_item_id}`.localeCompare(`${b.order_item_id}\0${b.bundle_item_id}`),
+    );
+  const shipping = order?.shipping || {};
+  const named = typeof shipping.name === 'string' ? shipping.name.trim() : '';
+  const snapshot = {
+    items,
+    name: named || `${shipping.first_name || ''} ${shipping.last_name || ''}`.trim(),
+    address1: shipping.address1 || '',
+    address2: shipping.address2 || '',
+    city: shipping.city || '',
+    state: shipping.state || '',
+    zip: shipping.zip || '',
+    country: typeof shipping.country === 'string' ? shipping.country : '',
+    phone: shipping.phone || '',
+    company: shipping.company || '',
+  };
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(snapshot)));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 // active Swell shipments of the order with this tracking number, oldest first
 async function findShipmentsByTracking(swell: SwellAPI, orderId: string, trackingNumber?: string): Promise<any[]> {
   if (!trackingNumber) return [];

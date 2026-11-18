@@ -11,6 +11,10 @@
       "type": "int",
       "description": "External order id sequence. 1 is the Swell order id; 2 is <id>-2 after a canceled parcel, and so on"
     },
+    "sendcloud_sync_hash": {
+      "type": "string",
+      "description": "Hash of the lines, quantities, shipping address and name last sent to Sendcloud"
+    },
     "sendcloud_parcel_id": {
       "type": "int",
       "description": "Sendcloud parcel ID"

@@ -117,11 +117,11 @@
       "default": true
     },
     {
-      "id": "remove_when_shipped_outside",
-      "label": "Remove the order from Sendcloud when it is shipped outside Sendcloud",
+      "id": "sync_with_swell",
+      "label": "Keep the Sendcloud order in sync with the Swell order",
       "type": "boolean",
       "ui": "toggle",
-      "description": "When a Swell shipment this app did not create leaves nothing left to ship, and the order has no Sendcloud parcel yet, remove it from Incoming Orders. A partial shipment updates that order to the quantities still to ship. Off by default.",
+      "description": "Until a label exists, update the Incoming Order when the Swell order's items, quantities or shipping address change, and remove it when nothing is left to ship. Off by default.",
       "default": false
     },
     {

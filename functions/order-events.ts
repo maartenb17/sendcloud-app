@@ -1,7 +1,9 @@
 import {
   INVOICE_WINDOW_MS,
   NOT_SENT_SUBSCRIPTION_CANCELED,
+  ORDER_CHANGED_AFTER_LABEL,
   ORDER_EXPAND,
+  REMOVED_FROM_SENDCLOUD,
   REMOVED_SHIPPED_OUTSIDE,
   SendcloudError,
   WAITING_FOR_INVOICE,
@@ -13,6 +15,7 @@ import {
   getAppData,
   getSendcloudSettings,
   getWeightUnit,
+  hasActiveLabel,
   hasCredentials,
   hasSeparateOrderSchedule,
   isCanceledOrder,
@@ -29,15 +32,16 @@ import {
   withLocalizedNames,
   withSubscriptionPlans,
 } from './lib/sendcloud';
-import { deliverableItems, orderWithRemainingQuantities } from './lib/shipments';
+import { deliverableItems, orderWithRemainingQuantities, sendcloudSyncHash } from './lib/shipments';
 import { syncOrder } from './lib/sync-order';
 
 export const config: SwellConfig = {
-  description: 'Send orders to Sendcloud and remove them when canceled or shipped outside Sendcloud',
+  description: 'Send orders to Sendcloud, keep them in sync, and remove them when canceled or nothing is left to ship',
   model: {
     events: [
       'order.submitted',
       'order.paid',
+      'order.updated',
       'order.canceled',
       'shipment.created',
       'invoice.created',
@@ -52,8 +56,8 @@ const OWN_SHIPMENT_NOTE = /^Sendcloud parcel /;
 
 export default async function (req: SwellRequest) {
   const eventType = req.data.$event?.type;
-  if (eventType === 'shipment.created') {
-    return handleShipmentCreated(req);
+  if (eventType === 'shipment.created' || eventType === 'order.updated') {
+    return syncSendcloudOrder(req);
   }
   if (eventType === 'subscription.updated') {
     return handleSubscription(req);
@@ -109,7 +113,7 @@ async function handleOrder(req: SwellRequest) {
     await swell.put(
       `/orders/${orderId}`,
       req.appValues({
-        ...(!appData.sendcloud_parcel_id && { sendcloud_status: 'Removed from Sendcloud' }),
+        ...(!appData.sendcloud_parcel_id && { sendcloud_status: REMOVED_FROM_SENDCLOUD }),
         sendcloud_error: null,
       }),
     );
@@ -330,21 +334,40 @@ async function settleHeldOrder(req: SwellRequest, settings: Awaited<ReturnType<t
   }
 }
 
-async function handleShipmentCreated(req: SwellRequest) {
+const APP_WRITE_IGNORED = new Set(['id', 'date_created', 'date_updated']);
+
+// an order.updated that only stores this app's own fields, or was written by this app
+function isOwnOrderWrite(data: any, appId: string): boolean {
+  const event = data?.$event;
+  if (event?.type !== 'order.updated') return false;
+  const changed = event?.data;
+  const keys =
+    changed && typeof changed === 'object' && !Array.isArray(changed)
+      ? Object.keys(changed).filter((key) => !APP_WRITE_IGNORED.has(key))
+      : null;
+  if (keys !== null && keys.length > 0 && keys.every((key) => key === '$app')) return true;
+  return Boolean(event.app_id && String(event.app_id) === appId && (keys === null || keys.length === 0));
+}
+
+async function syncSendcloudOrder(req: SwellRequest) {
   const { swell, data, appId } = req;
   const settings = await getSendcloudSettings(swell);
-  if (settings.remove_when_shipped_outside !== true || settings.enabled === false) {
+  if (settings.sync_with_swell !== true || settings.enabled === false) {
     return;
   }
   if (!hasCredentials(settings)) {
     console.error('Sendcloud: missing required settings (public_key, secret_key, integration_id)');
     return;
   }
+  const fromShipment = data.$event?.type === 'shipment.created';
   const notes = typeof data.notes === 'string' ? data.notes : '';
-  if (OWN_SHIPMENT_NOTE.test(notes)) {
+  if (fromShipment && OWN_SHIPMENT_NOTE.test(notes)) {
     return;
   }
-  const orderId = data.order_id;
+  if (isOwnOrderWrite(data, appId || 'sendcloud')) {
+    return;
+  }
+  const orderId = fromShipment ? data.order_id : data.id;
   if (!orderId) {
     return;
   }
@@ -353,40 +376,73 @@ async function handleShipmentCreated(req: SwellRequest) {
     return;
   }
   const appData = getAppData(order, appId || 'sendcloud');
-  if (data.id && appData.sendcloud_shipment_id && String(appData.sendcloud_shipment_id) === String(data.id)) {
+  if (fromShipment && data.id && appData.sendcloud_shipment_id && String(appData.sendcloud_shipment_id) === String(data.id)) {
     return;
   }
-  if (!appData.sendcloud_order_id || appData.sendcloud_parcel_id) {
+  if (!appData.sendcloud_order_id || isCanceledOrder(order)) {
     return;
   }
-  if (deliverableItems(order).length) {
-    await updateRemainingOrder(req, settings, order, appData);
+  if (appData.sendcloud_status === WAITING_FOR_INVOICE || appData.sendcloud_status === WAITING_FOR_OVERDUE) {
     return;
   }
 
+  const hash = await sendcloudSyncHash(order);
+  if (hasActiveLabel(appData)) {
+    if (hash === appData.sendcloud_sync_hash || appData.sendcloud_note === ORDER_CHANGED_AFTER_LABEL) {
+      return;
+    }
+    await swell.put(`/orders/${order.id}`, req.appValues({ sendcloud_note: ORDER_CHANGED_AFTER_LABEL }));
+    return;
+  }
+  if (!deliverableItems(order).length) {
+    await removeSyncedOrder(req, settings, order, appData, fromShipment);
+    return;
+  }
+  if (hash === appData.sendcloud_sync_hash) {
+    return;
+  }
+  await updateSyncedOrder(req, settings, order, appData, hash);
+}
+
+async function removeSyncedOrder(
+  req: SwellRequest,
+  settings: any,
+  order: any,
+  appData: Record<string, any>,
+  fromShipment: boolean,
+) {
+  const { swell } = req;
   try {
     await deleteOrder(settings, appData.sendcloud_order_id);
-    console.log(`Sendcloud: removed order ${order.number} from Sendcloud incoming orders; shipped outside Sendcloud`);
+    console.log(
+      fromShipment
+        ? `Sendcloud: removed order ${order.number} from Sendcloud incoming orders; shipped outside Sendcloud`
+        : `Sendcloud: removed order ${order.number} from Sendcloud incoming orders`,
+    );
   } catch (err: any) {
     if (!(err instanceof SendcloudError && [404, 410].includes(err.status))) {
-      const message = `Couldn't remove the order shipped outside Sendcloud: ${err?.message || String(err)}`;
+      const message = `Couldn't remove the order from Sendcloud: ${err?.message || String(err)}`;
       console.error(`Sendcloud: ${message}`);
       await swell.put(`/orders/${order.id}`, req.appValues({ sendcloud_error: message }));
       if (err instanceof SendcloudError && err.status < 500) return;
       throw err;
     }
   }
+  const status =
+    fromShipment || appData.sendcloud_status === REMOVED_SHIPPED_OUTSIDE
+      ? REMOVED_SHIPPED_OUTSIDE
+      : REMOVED_FROM_SENDCLOUD;
   await swell.put(
     `/orders/${order.id}`,
     req.appValues({
-      sendcloud_status: REMOVED_SHIPPED_OUTSIDE,
+      sendcloud_status: status,
       sendcloud_error: null,
     }),
   );
 }
 
-// same Incoming Order: remaining quantities only, bundles counted per component
-async function updateRemainingOrder(req: SwellRequest, settings: any, order: any, appData: Record<string, any>) {
+// same Incoming Order: remaining lines and the current address, bundles counted per component
+async function updateSyncedOrder(req: SwellRequest, settings: any, order: any, appData: Record<string, any>, hash: string) {
   const { swell } = req;
   try {
     const weightUnit = await getWeightUnit(swell);
@@ -399,14 +455,21 @@ async function updateRemainingOrder(req: SwellRequest, settings: any, order: any
       settings,
       buildOrder(orderWithRemainingQuantities(prepared), settings, weightUnit, externalOrderId(order.id, suffix)),
     );
-    console.log(`Sendcloud: updated order ${order.number} to the quantities still to ship`);
+    console.log(`Sendcloud: updated order ${order.number} to match the Swell order`);
   } catch (err: any) {
-    const message = `Couldn't update the order shipped outside Sendcloud: ${err?.message || String(err)}`;
+    const message = `Couldn't update the Sendcloud order: ${err?.message || String(err)}`;
     console.error(`Sendcloud: ${message}`);
     await swell.put(`/orders/${order.id}`, req.appValues({ sendcloud_error: message }));
     if (err instanceof SendcloudError && err.status < 500) return;
     throw err;
   }
+  await swell.put(
+    `/orders/${order.id}`,
+    req.appValues({
+      sendcloud_sync_hash: hash,
+      sendcloud_error: null,
+    }),
+  );
 }
 
 async function loadInvoice(swell: SwellAPI, data: any): Promise<any | null> {
