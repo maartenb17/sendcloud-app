@@ -1,6 +1,8 @@
 import {
   INVOICE_WINDOW_MS,
+  NOT_SENT_SUBSCRIPTION_CANCELED,
   ORDER_EXPAND,
+  REMOVED_SHIPPED_OUTSIDE,
   SendcloudError,
   WAITING_FOR_INVOICE,
   WAITING_FOR_OVERDUE,
@@ -19,15 +21,17 @@ import {
   shippableItems,
   subscriptionInArrears,
 } from './lib/sendcloud';
+import { deliverableItems } from './lib/shipments';
 import { syncOrder } from './lib/sync-order';
 
 export const config: SwellConfig = {
-  description: 'Send orders to Sendcloud and remove them when canceled',
+  description: 'Send orders to Sendcloud and remove them when canceled or shipped outside Sendcloud',
   model: {
     events: [
       'order.submitted',
       'order.paid',
       'order.canceled',
+      'shipment.created',
       'invoice.created',
       'invoice.payment_succeeded',
       'subscription.invoiced',
@@ -36,8 +40,13 @@ export const config: SwellConfig = {
   },
 };
 
+const OWN_SHIPMENT_NOTE = /^Sendcloud parcel /;
+
 export default async function (req: SwellRequest) {
   const eventType = req.data.$event?.type;
+  if (eventType === 'shipment.created') {
+    return handleShipmentCreated(req);
+  }
   if (eventType === 'subscription.updated') {
     return handleSubscription(req);
   }
@@ -258,7 +267,16 @@ async function settleHeldOrder(req: SwellRequest, settings: Awaited<ReturnType<t
     return;
   }
   if (isSubscriptionCanceled(subscription)) {
-    console.log(`Sendcloud: order ${order.number} subscription is canceled, skipping`);
+    if (appData.sendcloud_status !== NOT_SENT_SUBSCRIPTION_CANCELED) {
+      await swell.put(
+        `/orders/${order.id}`,
+        req.appValues({
+          sendcloud_status: NOT_SENT_SUBSCRIPTION_CANCELED,
+          sendcloud_error: null,
+        }),
+      );
+    }
+    console.log(`Sendcloud: order ${order.number} not sent, subscription is canceled`);
     return;
   }
   if (!paymentAllowsSend(settings, order)) {
@@ -302,6 +320,60 @@ async function settleHeldOrder(req: SwellRequest, settings: Awaited<ReturnType<t
     }
     throw err;
   }
+}
+
+async function handleShipmentCreated(req: SwellRequest) {
+  const { swell, data, appId } = req;
+  const settings = await getSendcloudSettings(swell);
+  if (settings.remove_when_shipped_outside !== true || settings.enabled === false) {
+    return;
+  }
+  if (!hasCredentials(settings)) {
+    console.error('Sendcloud: missing required settings (public_key, secret_key, integration_id)');
+    return;
+  }
+  const notes = typeof data.notes === 'string' ? data.notes : '';
+  if (OWN_SHIPMENT_NOTE.test(notes)) {
+    return;
+  }
+  const orderId = data.order_id;
+  if (!orderId) {
+    return;
+  }
+  const order = await swell.get(`/orders/${orderId}`, { expand: ORDER_EXPAND });
+  if (!order) {
+    return;
+  }
+  const appData = getAppData(order, appId || 'sendcloud');
+  if (data.id && appData.sendcloud_shipment_id && String(appData.sendcloud_shipment_id) === String(data.id)) {
+    return;
+  }
+  if (!appData.sendcloud_order_id || appData.sendcloud_parcel_id) {
+    return;
+  }
+  if (deliverableItems(order).length) {
+    return;
+  }
+
+  try {
+    await deleteOrder(settings, appData.sendcloud_order_id);
+    console.log(`Sendcloud: removed order ${order.number} from Sendcloud incoming orders; shipped outside Sendcloud`);
+  } catch (err: any) {
+    if (!(err instanceof SendcloudError && [404, 410].includes(err.status))) {
+      const message = `Couldn't remove the order shipped outside Sendcloud: ${err?.message || String(err)}`;
+      console.error(`Sendcloud: ${message}`);
+      await swell.put(`/orders/${order.id}`, req.appValues({ sendcloud_error: message }));
+      if (err instanceof SendcloudError && err.status < 500) return;
+      throw err;
+    }
+  }
+  await swell.put(
+    `/orders/${order.id}`,
+    req.appValues({
+      sendcloud_status: REMOVED_SHIPPED_OUTSIDE,
+      sendcloud_error: null,
+    }),
+  );
 }
 
 async function loadInvoice(swell: SwellAPI, data: any): Promise<any | null> {

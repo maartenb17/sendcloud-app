@@ -1,6 +1,7 @@
 import {
   SendcloudError,
   SendcloudSettings,
+  NOT_SENT_SUBSCRIPTION_CANCELED,
   WAITING_FOR_INVOICE,
   WAITING_FOR_OVERDUE,
   canceledParcel,
@@ -63,7 +64,16 @@ export async function syncOrder(
   if (settings.hold_separate_order_schedule === true) {
     const decision = await renewalInvoice(swell, appId, order);
     if (decision.block === 'canceled') {
-      console.log(`Sendcloud: order ${order.number} subscription is canceled, skipping`);
+      if (appData.sendcloud_status !== NOT_SENT_SUBSCRIPTION_CANCELED) {
+        await swell.put(
+          `/orders/${order.id}`,
+          appValues({
+            sendcloud_status: NOT_SENT_SUBSCRIPTION_CANCELED,
+            sendcloud_error: null,
+          }),
+        );
+      }
+      console.log(`Sendcloud: order ${order.number} not sent, subscription is canceled`);
       return { status: 'skipped', reason: 'subscription is canceled' };
     }
     if (decision.applies && decision.invoice?.status !== 'paid') {

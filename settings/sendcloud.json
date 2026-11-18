@@ -117,6 +117,14 @@
       "default": true
     },
     {
+      "id": "remove_when_shipped_outside",
+      "label": "Remove the order from Sendcloud when it is shipped outside Sendcloud",
+      "type": "boolean",
+      "ui": "toggle",
+      "description": "When a Swell shipment this app did not create leaves nothing left to ship, and the order has no Sendcloud parcel yet, remove it from Incoming Orders. Off by default.",
+      "default": false
+    },
+    {
       "id": "notify_customer",
       "label": "Notify the customer when the shipment is created",
       "type": "boolean",

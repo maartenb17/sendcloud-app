@@ -731,8 +731,15 @@ describe("order-events", () => {
     await handler(req);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
-    expect(logs).toContain("Sendcloud: order 100996 subscription is canceled, skipping");
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_status: "Not sent: subscription canceled",
+          sendcloud_error: null,
+        },
+      },
+    });
+    expect(logs).toContain("Sendcloud: order 100996 not sent, subscription is canceled");
 
     fetchMock.mockClear();
     logs.length = 0;
@@ -759,10 +766,164 @@ describe("order-events", () => {
     await handler(updated);
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(updated.swell.put).not.toHaveBeenCalled();
-    expect(logs).toContain("Sendcloud: order 100996 subscription is canceled, skipping");
+    expect(updated.swell.put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_status: "Not sent: subscription canceled",
+          sendcloud_error: null,
+        },
+      },
+    });
+    expect(logs).toContain("Sendcloud: order 100996 not sent, subscription is canceled");
+  });
+
+  it("removes a fully shipped order from Sendcloud when the shipment is not this app's", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
+    const { req, put } = shipmentRequest(finishedOrder());
+
+    await handler(req);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://panel.sendcloud.sc/api/v3/orders/669");
+    expect(init.method).toBe("DELETE");
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_status: "Removed from Sendcloud: shipped outside Sendcloud",
+          sendcloud_error: null,
+        },
+      },
+    });
+    expect(put.mock.calls[0][1].$app.sendcloud.sendcloud_order_id).toBeUndefined();
+  });
+
+  it("leaves the order when a manual shipment still has something to ship", async () => {
+    const { req, put } = shipmentRequest(makeOrder({ $app: { sendcloud: { sendcloud_order_id: 669 } } }));
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("leaves the order when one bundle component is still to ship", async () => {
+    const order = makeOrder({
+      $app: { sendcloud: { sendcloud_order_id: 669 } },
+      items: [
+        {
+          id: "pack",
+          delivery: "shipment",
+          bundle_items: [
+            { id: "done", product_id: "p1", quantity_shipment_deliverable: 0 },
+            { id: "open", product_id: "p2", quantity_shipment_deliverable: 1 },
+          ],
+        },
+      ],
+    });
+    const { req, put } = shipmentRequest(order);
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("leaves the order when a parcel already exists", async () => {
+    const { req, put } = shipmentRequest(
+      finishedOrder({ $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_parcel_id: 5001 } } }),
+    );
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("leaves the order when it was never sent to Sendcloud", async () => {
+    const { req, put } = shipmentRequest(finishedOrder({ $app: undefined }));
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("leaves the order when the shipment was created by this app", async () => {
+    const byNote = shipmentRequest(finishedOrder(), { notes: "Sendcloud parcel 99: https://tracking.example/x" });
+    await handler(byNote.req);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(byNote.put).not.toHaveBeenCalled();
+
+    const byId = shipmentRequest(
+      finishedOrder({ $app: { sendcloud: { sendcloud_order_id: 669, sendcloud_shipment_id: "ship_1" } } }),
+    );
+    await handler(byId.req);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(byId.put).not.toHaveBeenCalled();
+  });
+
+  it("marks the order removed when Sendcloud already deleted it", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ message: "Not found" }, 404));
+    const { req, put } = shipmentRequest(finishedOrder());
+
+    await expect(handler(req)).resolves.toBeUndefined();
+    expect(put).toHaveBeenCalledWith("/orders/order_1", {
+      $app: {
+        sendcloud: {
+          sendcloud_status: "Removed from Sendcloud: shipped outside Sendcloud",
+          sendcloud_error: null,
+        },
+      },
+    });
+  });
+
+  it("does not remove an order shipped outside Sendcloud when the setting is off", async () => {
+    const { req, put } = shipmentRequest(finishedOrder(), {}, SETTINGS);
+
+    await handler(req);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
   });
 });
+
+const OUTSIDE = { ...SETTINGS, remove_when_shipped_outside: true };
+
+function finishedOrder(overrides: Record<string, any> = {}) {
+  const order = makeOrder({
+    $app: { sendcloud: { sendcloud_order_id: 669 } },
+    ...overrides,
+  });
+  const item = order.items?.[0] as { bundle_items?: unknown; quantity_shipment_deliverable?: number } | undefined;
+  if (item && !item.bundle_items) {
+    item.quantity_shipment_deliverable = 0;
+  }
+  return order;
+}
+
+function shipmentRequest(
+  order: any,
+  shipment: Record<string, any> = {},
+  settings: Record<string, any> = OUTSIDE,
+) {
+  const put = vi.fn().mockResolvedValue({});
+  const req = createMockRequest({
+    data: {
+      id: "ship_1",
+      order_id: "order_1",
+      notes: null,
+      ...shipment,
+      $event: { type: "shipment.created" },
+    } as any,
+    appId: "sendcloud",
+    swell: {
+      settings: vi.fn().mockResolvedValue({ sendcloud: settings }),
+      get: routeGet({ "/orders/order_1": order }),
+      put,
+    },
+  });
+  return { req, put };
+}
 
 const SEPARATE = {
   billing_schedule: { interval: "monthly", interval_count: 1 },

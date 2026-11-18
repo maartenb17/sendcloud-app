@@ -54,7 +54,7 @@ function lineKey(item: { order_item_id: string; bundle_item_id?: string }): stri
 }
 
 // the order's items left to ship; a bundle is one line per component, not one line for the bundle
-function deliverableItems(order: any) {
+export function deliverableItems(order: any) {
   const lines = [];
   for (const item of order.items || []) {
     if (item?.delivery !== 'shipment') continue;

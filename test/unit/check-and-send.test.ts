@@ -166,6 +166,28 @@ describe("check-and-send", () => {
     expect(logs).toContain("Sendcloud: order 100011 is canceled, skipping");
   });
 
+  it("marks a waiting order when the subscription is canceled", async () => {
+    const order = renewal({
+      $app: { sendcloud: { sendcloud_status: "Waiting for invoice payment", sendcloud_invoice_id: "inv_1" } },
+    });
+    const { req, put } = requestFor(
+      [order],
+      { ...SETTINGS, hold_separate_order_schedule: true },
+      holdGet(order, [], { ...SEPARATE, status: "canceled", canceled: true }),
+    );
+
+    await expect(handler(req)).rejects.toThrow("Skipped: 100996: subscription is canceled.");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith(`/orders/${ORDER_ID}`, {
+      $app: {
+        sendcloud: {
+          sendcloud_status: "Not sent: subscription canceled",
+          sendcloud_error: null,
+        },
+      },
+    });
+  });
+
   it("holds a renewal until its invoice is paid and stores the invoice id", async () => {
     const order = renewal({ grand_total: 0 });
     const { req, put } = requestFor(

@@ -34,6 +34,7 @@ export interface SendcloudSettings {
   shipping_option_code?: string;
   default_weight?: number;
   create_fulfillment?: boolean;
+  remove_when_shipped_outside?: boolean;
   notify_customer?: boolean;
   enabled?: boolean;
 }
@@ -461,6 +462,8 @@ export function getAppData(record: any, appId: string): Record<string, any> {
 
 export const WAITING_FOR_INVOICE = 'Waiting for invoice payment';
 export const WAITING_FOR_OVERDUE = 'Waiting for overdue payments';
+export const NOT_SENT_SUBSCRIPTION_CANCELED = 'Not sent: subscription canceled';
+export const REMOVED_SHIPPED_OUTSIDE = 'Removed from Sendcloud: shipped outside Sendcloud';
 
 const ARREARS_INVOICE_STATUSES = new Set(['pending', 'unpaid']);
 // invoice and order can be this far apart and still belong together (step 0d)
